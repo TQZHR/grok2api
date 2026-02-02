@@ -71,6 +71,18 @@ function encodeAssetPath(raw: string): string {
   }
 }
 
+function normalizeGeneratedAssetUrls(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const out: string[] = [];
+  for (const u of input) {
+    if (typeof u !== "string") continue;
+    const trimmed = u.trim();
+    if (!trimmed) continue;
+    out.push(trimmed);
+  }
+  return out;
+}
+
 export function createOpenAiStreamFromGrokNdjson(
   grokResp: Response,
   opts: {
@@ -241,11 +253,10 @@ export function createOpenAiStreamFromGrokNdjson(
             if (isImage) {
               const modelResp = grok.modelResponse;
               if (modelResp) {
-                const urls = Array.isArray(modelResp.generatedImageUrls) ? modelResp.generatedImageUrls : [];
+                const urls = normalizeGeneratedAssetUrls((modelResp as any).generatedImageUrls);
                 if (urls.length) {
                   const linesOut: string[] = [];
                   for (const u of urls) {
-                    if (typeof u !== "string") continue;
                     const imgPath = encodeAssetPath(u);
                     const imgUrl = toImgProxyUrl(global, origin, imgPath);
                     linesOut.push(`![Generated Image](${imgUrl})`);
@@ -379,14 +390,16 @@ export async function parseOpenAiFromGrokNdjson(
     if (typeof modelResp.model === "string" && modelResp.model) model = modelResp.model;
     if (typeof modelResp.message === "string") content = modelResp.message;
 
-    const urls = Array.isArray(modelResp.generatedImageUrls) ? modelResp.generatedImageUrls : [];
+    const urls = normalizeGeneratedAssetUrls((modelResp as any).generatedImageUrls);
     for (const u of urls) {
-      if (typeof u !== "string") continue;
       const imgPath = encodeAssetPath(u);
       const imgUrl = toImgProxyUrl(global, origin, imgPath);
       content += `\n![Generated Image](${imgUrl})`;
     }
-    break;
+
+    // For image generation responses, Grok may emit intermediate modelResponse frames with empty/placeholder URLs.
+    // Keep scanning until we see at least one usable URL; otherwise the caller gets a broken `/images/p_Lw` link.
+    if (urls.length) break;
   }
 
   return {
