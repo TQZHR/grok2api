@@ -1,13 +1,22 @@
 name: Deploy to Cloudflare Workers
 
+
+
+
 on:
   push:
     branches:
       - main
   workflow_dispatch:
 
+
+
+
 permissions:
   contents: read
+
+
+
 
 jobs:
   deploy:
@@ -16,17 +25,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+
+
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
 
+
+
+
       - name: Install dependencies
         run: npm ci
 
+
+
+
       - name: Typecheck
         run: npm run typecheck
+
+
+
 
       - name: Ensure D1 + KV and generate wrangler.ci.toml
         env:
@@ -34,106 +55,9 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           python - <<'PY'
-          import json
-          import os
-          import re
-          import urllib.request
-          
-          token = os.environ.get("CLOUDFLARE_API_TOKEN", "")
-          account_id = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
-          if not token or not account_id:
-              raise SystemExit("Missing CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID")
 
-          src_path = "wrangler.toml"
-          dst_path = "wrangler.ci.toml"
-          wrangler_text = open(src_path, "r", encoding="utf-8").read()
 
-          def extract(pattern: str, fallback: str) -> str:
-              m = re.search(pattern, wrangler_text)
-              return m.group(1).strip() if m and m.group(1).strip() else fallback
 
-          worker_name = extract(r'(?m)^name\\s*=\\s*\"([^\"]+)\"\\s*$', "grok2api")
-          
-          kv_title = f"{worker_name}-cache"
-          kv_base = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/storage/kv/namespaces"
-          
-          def request(method: str, url: str, data=None):
-              headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-              body = None if data is None else json.dumps(data).encode("utf-8")
-              req = urllib.request.Request(url, data=body, headers=headers, method=method)
-              with urllib.request.urlopen(req) as resp:
-                  return json.loads(resp.read().decode("utf-8"))
-          
-          # === Ensure KV namespace ===
-          kv_id = None
-          page = 1
-          while True:
-              res = request("GET", f"{kv_base}?per_page=100&page={page}")
-              if not res.get("success"):
-                  raise RuntimeError(res)
-              for item in res.get("result", []):
-                  if item.get("title") == kv_title:
-                      kv_id = item.get("id")
-                      break
-              if kv_id:
-                  break
-              info = res.get("result_info") or {}
-              if page >= int(info.get("total_pages") or 1):
-                  break
-              page += 1
-          
-          if not kv_id:
-              res = request("POST", kv_base, {"title": kv_title})
-              if not res.get("success"):
-                  raise RuntimeError(res)
-              kv_id = res["result"]["id"]
 
-          # === Ensure D1 database ===
-          d1_name = extract(r'(?m)^database_name\\s*=\\s*\"([^\"]+)\"\\s*$', worker_name)
-          d1_base = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/d1/database"
 
-          d1_id = None
-          page = 1
-          while True:
-              res = request("GET", f"{d1_base}?per_page=100&page={page}")
-              if not res.get("success"):
-                  raise RuntimeError(res)
-              for item in res.get("result", []):
-                  if item.get("name") == d1_name:
-                      d1_id = item.get("uuid") or item.get("id")
-                      break
-              if d1_id:
-                  break
-              info = res.get("result_info") or {}
-              if page >= int(info.get("total_pages") or 1):
-                  break
-              page += 1
 
-          if not d1_id:
-              res = request("POST", d1_base, {"name": d1_name})
-              if not res.get("success"):
-                  raise RuntimeError(res)
-              d1_id = res.get("result", {}).get("uuid") or res.get("result", {}).get("id")
-              if not d1_id:
-                  raise RuntimeError({"error": "Missing D1 database id", "response": res})
-
-          text2 = wrangler_text
-          text2 = re.sub(r'REPLACE_WITH_KV_NAMESPACE_ID', kv_id, text2)
-          text2 = re.sub(r'REPLACE_WITH_D1_DATABASE_ID', d1_id, text2)
-          open(dst_path, "w", encoding="utf-8").write(text2)
-          print(f"KV namespace ready: {kv_title} ({kv_id})")
-          print(f"D1 database ready: {d1_name} ({d1_id})")
-          print(f"Generated {dst_path}")
-          PY
-
-      - name: Apply D1 migrations
-        run: npx wrangler d1 migrations apply grok2api --remote --config wrangler.ci.toml
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-
-      - name: Deploy Worker
-        run: npx wrangler deploy --config wrangler.ci.toml
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
