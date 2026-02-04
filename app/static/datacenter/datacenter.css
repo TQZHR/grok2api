@@ -1,0 +1,45 @@
+.card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 14px 12px;
+}
+
+.card-title {
+  font-size: 12px;
+  color: var(--accents-4);
+  margin-bottom: 10px;
+}
+
+.chart-wrap {
+  position: relative;
+  width: 100%;
+  height: 260px;
+}
+
+.dc-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.log-panel {
+  background: #0b0d10;
+  border: 1px solid #1c2026;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.log-content {
+  margin: 0;
+  padding: 12px 12px;
+  max-height: 420px;
+  overflow: auto;
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #d8dee9;
+  white-space: pre;
+}
+

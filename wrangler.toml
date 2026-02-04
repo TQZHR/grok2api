@@ -3,7 +3,12 @@ main = "src/index.ts"
 compatibility_date = "2026-01-28"
 
 # Static assets (admin UI)
-assets = { directory = "./app/template", binding = "ASSETS" }
+assets = { directory = "./app/static", binding = "ASSETS" }
+
+# Hard-pin execution closer to the US to make egress locality more stable.
+# Docs: https://developers.cloudflare.com/workers/platform/placement/
+[placement]
+region = "aws:us-east-1"
 
 [[d1_databases]]
 binding = "DB"
@@ -17,10 +22,24 @@ binding = "KV_CACHE"
 # Filled by CI / your first deployment bootstrap.
 id = "REPLACE_WITH_KV_NAMESPACE_ID"
 
+# Durable Objects migrations history:
+# - do-v1 created AutoRegisterJob (now removed)
+# - do-v2 deletes it so the Worker can deploy without exporting the class
+[[migrations]]
+tag = "do-v1"
+new_sqlite_classes = ["AutoRegisterJob"]
+
+[[migrations]]
+tag = "do-v2"
+deleted_classes = ["AutoRegisterJob"]
+
 [vars]
 # Daily reset at local midnight (default: Asia/Shanghai, UTC+8).
 # Make sure the cron below matches this offset.
 CACHE_RESET_TZ_OFFSET_MINUTES = "480"
+
+# Build info (CI will inject commit SHA into wrangler.ci.toml)
+BUILD_SHA = "dev"
 
 # Workers KV has per-value limits; keep <= 25MB.
 KV_CACHE_MAX_BYTES = "26214400"

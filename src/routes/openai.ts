@@ -6,7 +6,7 @@ import { getSettings, normalizeCfCookie } from "../settings";
 import { isValidModel, MODEL_CONFIG } from "../grok/models";
 import { extractContent, buildConversationPayload, sendConversationRequest } from "../grok/conversation";
 import { uploadImage } from "../grok/upload";
-import { createPost } from "../grok/create";
+import { createMediaPost, createPost } from "../grok/create";
 import { createOpenAiStreamFromGrokNdjson, parseOpenAiFromGrokNdjson } from "../grok/processor";
 import { addRequestLog } from "../repo/logs";
 import { applyCooldown, recordTokenFailure, selectBestToken } from "../repo/tokens";
@@ -106,6 +106,12 @@ openAiRoutes.post("/chat/completions", async (c) => {
       model?: string;
       messages?: any[];
       stream?: boolean;
+      video_config?: {
+        aspect_ratio?: string;
+        video_length?: number;
+        resolution?: string;
+        preset?: string;
+      };
     };
 
     requestedModel = String(body.model ?? "");
@@ -143,9 +149,18 @@ openAiRoutes.post("/chat/completions", async (c) => {
         const imgUris = uploads.map((u) => u.fileUri).filter(Boolean);
 
         let postId: string | undefined;
-        if (isVideoModel && imgUris.length) {
-          const post = await createPost(imgUris[0]!, cookie, settingsBundle.grok);
-          postId = post.postId || undefined;
+        if (isVideoModel) {
+          if (imgUris.length) {
+            const post = await createPost(imgUris[0]!, cookie, settingsBundle.grok);
+            postId = post.postId || undefined;
+          } else {
+            const post = await createMediaPost(
+              { mediaType: "MEDIA_POST_TYPE_VIDEO", prompt: content },
+              cookie,
+              settingsBundle.grok,
+            );
+            postId = post.postId || undefined;
+          }
         }
 
         const { payload, referer } = buildConversationPayload({
@@ -154,6 +169,7 @@ openAiRoutes.post("/chat/completions", async (c) => {
           imgIds,
           imgUris,
           ...(postId ? { postId } : {}),
+          ...(isVideoModel && body.video_config ? { videoConfig: body.video_config } : {}),
           settings: settingsBundle.grok,
         });
 

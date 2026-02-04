@@ -1,16 +1,29 @@
 name: Deploy to Cloudflare Workers
 
 on:
+  workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: "Deployment target"
+        type: choice
+        required: true
+        default: cloudflare
+        options:
+          - cloudflare
+          - docker
+          - both
   push:
     branches:
       - main
-  workflow_dispatch:
+    tags:
+      - "v*"
 
 permissions:
   contents: read
 
 jobs:
-  deploy:
+  deploy-cloudflare:
+    if: ${{ (github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_target == 'cloudflare' || github.event.inputs.deploy_target == 'both')) || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -33,7 +46,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          python - <<'PY'
+          python -u - <<'PY'
           import json
           import os
           import re
@@ -41,21 +54,24 @@ jobs:
           
           token = os.environ.get("CLOUDFLARE_API_TOKEN", "")
           account_id = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
+          build_sha = os.environ.get("GITHUB_SHA", "") or ""
           if not token or not account_id:
               raise SystemExit("Missing CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID")
 
           src_path = "wrangler.toml"
           dst_path = "wrangler.ci.toml"
+          print(f"Reading {src_path}...", flush=True)
           wrangler_text = open(src_path, "r", encoding="utf-8").read()
 
           def extract(pattern: str, fallback: str) -> str:
               m = re.search(pattern, wrangler_text)
               return m.group(1).strip() if m and m.group(1).strip() else fallback
 
-          worker_name = extract(r'(?m)^name\\s*=\\s*\"([^\"]+)\"\\s*$', "grok2api")
+          worker_name = extract(r'(?m)^name\s*=\s*"([^"]+)"\s*$', "grok2api")
           
           kv_title = f"{worker_name}-cache"
           kv_base = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/storage/kv/namespaces"
+          print(f"Ensuring KV namespace: {kv_title}", flush=True)
           
           def request(method: str, url: str, data=None):
               headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -68,6 +84,7 @@ jobs:
           kv_id = None
           page = 1
           while True:
+              print(f"KV list page={page}...", flush=True)
               res = request("GET", f"{kv_base}?per_page=100&page={page}")
               if not res.get("success"):
                   raise RuntimeError(res)
@@ -83,18 +100,21 @@ jobs:
               page += 1
           
           if not kv_id:
+              print("KV namespace not found; creating...", flush=True)
               res = request("POST", kv_base, {"title": kv_title})
               if not res.get("success"):
                   raise RuntimeError(res)
               kv_id = res["result"]["id"]
 
           # === Ensure D1 database ===
-          d1_name = extract(r'(?m)^database_name\\s*=\\s*\"([^\"]+)\"\\s*$', worker_name)
+          d1_name = extract(r'(?m)^database_name\s*=\s*"([^"]+)"\s*$', worker_name)
           d1_base = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/d1/database"
+          print(f"Ensuring D1 database: {d1_name}", flush=True)
 
           d1_id = None
           page = 1
           while True:
+              print(f"D1 list page={page}...", flush=True)
               res = request("GET", f"{d1_base}?per_page=100&page={page}")
               if not res.get("success"):
                   raise RuntimeError(res)
@@ -110,6 +130,7 @@ jobs:
               page += 1
 
           if not d1_id:
+              print("D1 database not found; creating...", flush=True)
               res = request("POST", d1_base, {"name": d1_name})
               if not res.get("success"):
                   raise RuntimeError(res)
@@ -117,17 +138,73 @@ jobs:
               if not d1_id:
                   raise RuntimeError({"error": "Missing D1 database id", "response": res})
 
+          print("Generating wrangler.ci.toml...", flush=True)
           text2 = wrangler_text
+          # Replace placeholders (default) and also force-set ids in case the template
+          # already contains other values.
           text2 = re.sub(r'REPLACE_WITH_KV_NAMESPACE_ID', kv_id, text2)
           text2 = re.sub(r'REPLACE_WITH_D1_DATABASE_ID', d1_id, text2)
+          text2 = re.sub(
+              r'(?ms)(\[\[kv_namespaces\]\].*?^\s*id\s*=\s*")[^"]*("\s*)$',
+              lambda m: f"{m.group(1)}{kv_id}{m.group(2)}",
+              text2,
+          )
+          text2 = re.sub(
+              r'(?ms)(\[\[d1_databases\]\].*?^\s*database_id\s*=\s*")[^"]*("\s*)$',
+              lambda m: f"{m.group(1)}{d1_id}{m.group(2)}",
+              text2,
+          )
+
+          if build_sha:
+              if re.search(r'(?m)^BUILD_SHA\s*=', text2):
+                  text2 = re.sub(r'(?m)^BUILD_SHA\s*=\s*"[^"]*"\s*$', f'BUILD_SHA = "{build_sha}"', text2)
+              else:
+                  # Ensure we expose build info for debugging (e.g. /health).
+                  text2 = re.sub(r'(?m)^\[vars\]\s*$', f'[vars]\nBUILD_SHA = "{build_sha}"', text2, count=1)
           open(dst_path, "w", encoding="utf-8").write(text2)
           print(f"KV namespace ready: {kv_title} ({kv_id})")
           print(f"D1 database ready: {d1_name} ({d1_id})")
           print(f"Generated {dst_path}")
           PY
 
+      - name: Verify US placement
+        run: |
+          python -u - <<'PY'
+          import tomllib
+
+          with open("wrangler.ci.toml", "rb") as f:
+              data = tomllib.load(f)
+          placement = data.get("placement") or {}
+          region = (placement.get("region") or "").strip()
+          if region != "aws:us-east-1":
+              raise SystemExit(
+                  'wrangler.ci.toml: missing required [placement] region = "aws:us-east-1"'
+              )
+          def normalize_dir(v: str) -> str:
+              s = (v or "").strip().replace("\\\\", "/")
+              while s.startswith("./"):
+                  s = s[2:]
+              s = s.rstrip("/")
+              return s
+
+          assets = data.get("assets") or {}
+          directory = normalize_dir(assets.get("directory") or "")
+          binding = (assets.get("binding") or "").strip()
+          if directory != "app/static" or binding != "ASSETS":
+              raise SystemExit(
+                  'wrangler.ci.toml: missing required assets binding. '
+                  f'Expected directory="./app/static" (or "app/static") and binding="ASSETS", '
+                  f'got directory={assets.get("directory")!r}, binding={assets.get("binding")!r}'
+              )
+          vars = data.get("vars") or {}
+          build_sha = str(vars.get("BUILD_SHA") or "").strip()
+          if not build_sha or build_sha == "dev":
+              raise SystemExit('wrangler.ci.toml: BUILD_SHA not set (expected CI to inject GITHUB_SHA)')
+          print(f"OK: placement.region = aws:us-east-1; BUILD_SHA={build_sha}")
+          PY
+
       - name: Apply D1 migrations
-        run: npx wrangler d1 migrations apply grok2api --remote --config wrangler.ci.toml
+        run: npx wrangler d1 migrations apply DB --remote --config wrangler.ci.toml
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -137,3 +214,96 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  build-docker:
+    if: ${{ (github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_target == 'docker' || github.event.inputs.deploy_target == 'both')) || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            suffix: amd64
+          - platform: linux/arm64
+            suffix: arm64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}},suffix=-${{ matrix.suffix }}
+            type=raw,value=latest-${{ matrix.suffix }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.suffix }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.suffix }}
+          pull: true
+
+  merge-docker-manifests:
+    if: ${{ (github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_target == 'docker' || github.event.inputs.deploy_target == 'both')) || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) }}
+    runs-on: ubuntu-latest
+    needs: build-docker
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest
+
+      - name: Create and push manifest
+        run: |
+          TAGS="${{ steps.meta.outputs.tags }}"
+          for tag in $TAGS; do
+            echo "合并标签: $tag"
+            docker buildx imagetools create -t $tag \
+              ${tag}-amd64 \
+              ${tag}-arm64
+          done

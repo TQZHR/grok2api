@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "db:migrate": "wrangler d1 migrations apply grok2api --remote",
+    "db:migrate": "wrangler d1 migrations apply DB --remote",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

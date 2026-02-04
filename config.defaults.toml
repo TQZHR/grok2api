@@ -1,0 +1,56 @@
+[grok]
+temporary = true
+stream = true
+thinking = true
+dynamic_statsig = true
+filter_tags = ["xaiartifact","xai:tool_usage_card","grok:render"]
+video_poster_preview = false
+timeout = 120
+base_proxy_url = ""
+asset_proxy_url = ""
+cf_clearance = ""
+max_retry = 3
+retry_status_codes = [401,429,403]
+
+[app]
+app_url = "http://127.0.0.1:8000"
+admin_username = "admin"
+app_key = "admin"
+api_key = ""
+image_format = "url"
+video_format = "url"
+
+[token]
+auto_refresh = true
+refresh_interval_hours = 8
+fail_threshold = 5
+save_delay_ms = 500
+reload_interval_sec = 30
+
+[cache]
+enable_auto_clean = true
+limit_mb = 1024
+keep_base64_cache = true
+
+[performance]
+assets_max_concurrent = 25
+media_max_concurrent = 50
+usage_max_concurrent = 25
+assets_delete_batch_size = 10
+admin_assets_batch_size = 10
+
+[register]
+worker_domain = ""
+email_domain = ""
+admin_password = ""
+yescaptcha_key = ""
+solver_url = "http://127.0.0.1:5072"
+# 推荐 camoufox（对 accounts.x.ai 的 Turnstile 成功率更高）；若环境未安装会自动回退到 chromium。
+solver_browser_type = "camoufox"
+solver_threads = 5
+register_threads = 10
+default_count = 100
+auto_start_solver = true
+solver_debug = false
+max_errors = 0
+max_runtime_minutes = 0
