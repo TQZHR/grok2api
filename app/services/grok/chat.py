@@ -211,14 +211,21 @@ class ChatRequestBuilder:
         temporary = get_config("grok.temporary", True)
         if think is None:
             think = get_config("grok.thinking", False)
+
+        # Upstream payload expects image attachments merged into fileAttachments.
+        merged_attachments: List[str] = []
+        if file_attachments:
+            merged_attachments.extend(file_attachments)
+        if image_attachments:
+            merged_attachments.extend(image_attachments)
         
         return {
             "temporary": temporary,
             "modelName": model,
             "modelMode": mode,
             "message": message,
-            "fileAttachments": file_attachments or [],
-            "imageAttachments": image_attachments or [],
+            "fileAttachments": merged_attachments,
+            "imageAttachments": [],
             "disableSearch": False,
             "enableImageGeneration": True,
             "returnImageBytes": False,
@@ -460,8 +467,7 @@ class ChatService:
         try:
             token_mgr = await get_token_manager()
             await token_mgr.reload_if_stale()
-            pool_name = ModelService.pool_for_model(model)
-            token = token_mgr.get_token(pool_name)
+            token = token_mgr.get_token_for_model(model)
         except Exception as e:
             logger.error(f"Failed to get token: {e}")
             try:

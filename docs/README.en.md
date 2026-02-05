@@ -28,6 +28,9 @@ This fork additionally provides a **Cloudflare Workers / Pages** deployment (Typ
 uv sync
 
 uv run main.py
+
+# (Optional) Smoke check
+python scripts/smoke_test.py --base-url http://127.0.0.1:8000
 ```
 
 - Deployment
@@ -35,8 +38,26 @@ uv run main.py
 ```
 git clone https://github.com/TQZHR/grok2api.git
 
+# Enter the project directory
+cd grok2api
+
+# Pull and run the prebuilt image (default)
 docker compose up -d
+
+# Update to the latest image
+docker compose pull
+docker compose up -d
+
+# Build from current source and run (optional)
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+
+# (Optional) Smoke check
+python scripts/smoke_test.py --base-url http://127.0.0.1:8000
 ```
+
+> If `docker compose up -d` fails with `denied` while pulling: the GHCR image is not publicly pullable (private or requires auth). Run `docker login ghcr.io`, or set `GROK2API_IMAGE` in `.env` to your own public image; alternatively use `--build` to build from source.
+
+> Optional: copy `.env.example` to `.env` to configure port/logging/storage. You can also set `COMPOSE_PROFILES` to enable `redis/pgsql/mysql` with one compose file (see examples in `.env.example`).
 
 ### Admin panel
 

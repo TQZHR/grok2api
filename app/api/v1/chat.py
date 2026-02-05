@@ -4,13 +4,15 @@ Chat Completions API 路由
 
 from typing import Any, Dict, List, Optional, Union
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.auth import verify_api_key
 from app.services.grok.chat import ChatService
 from app.services.grok.model import ModelService
 from app.core.exceptions import ValidationException
+from app.services.quota import enforce_daily_quota
 
 
 router = APIRouter(tags=["Chat"])
@@ -201,11 +203,14 @@ def validate_request(request: ChatCompletionRequest):
 
 
 @router.post("/chat/completions")
-async def chat_completions(request: ChatCompletionRequest):
+async def chat_completions(request: ChatCompletionRequest, api_key: Optional[str] = Depends(verify_api_key)):
     """Chat Completions API - 兼容 OpenAI"""
     
     # 参数验证
     validate_request(request)
+
+    # Daily quota (best-effort)
+    await enforce_daily_quota(api_key, request.model)
     
     # 检测视频模型
     model_info = ModelService.get(request.model)

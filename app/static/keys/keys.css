@@ -1,0 +1,33 @@
+:root {
+  --table-muted: rgba(0, 0, 0, 0.06);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: white;
+}
+
+.pill-muted {
+  background: rgba(0, 0, 0, 0.03);
+  color: var(--accents-5);
+}
+
+.mono {
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.btn-link {
+  color: var(--accents-5);
+  font-size: 12px;
+}
+
+.btn-link:hover {
+  color: black;
+}
+

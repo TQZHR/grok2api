@@ -143,6 +143,27 @@ app.get("/admin/cache", (c) => {
   return fetchAsset(c, "/cache/cache.html");
 });
 
+app.get("/admin/keys", (c) => {
+  const buildSha = getBuildSha(c.env as Env);
+  const v = c.req.query("v") ?? "";
+  if (v !== buildSha) return c.redirect(`/admin/keys?v=${encodeURIComponent(buildSha)}`, 302);
+  return fetchAsset(c, "/keys/keys.html");
+});
+
+app.get("/chat", (c) => {
+  const buildSha = getBuildSha(c.env as Env);
+  const v = c.req.query("v") ?? "";
+  if (v !== buildSha) return c.redirect(`/chat?v=${encodeURIComponent(buildSha)}`, 302);
+  return fetchAsset(c, "/chat/chat.html");
+});
+
+app.get("/admin/chat", (c) => {
+  const buildSha = getBuildSha(c.env as Env);
+  const v = c.req.query("v") ?? "";
+  if (v !== buildSha) return c.redirect(`/admin/chat?v=${encodeURIComponent(buildSha)}`, 302);
+  return fetchAsset(c, "/chat/chat_admin.html");
+});
+
 app.get("/static/*", (c) => {
   const url = new URL(c.req.url);
   if (url.pathname === "/static/_worker.js") return c.notFound();

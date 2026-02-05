@@ -46,6 +46,7 @@ class TokenInfo(BaseModel):
     token: str
     status: TokenStatus = TokenStatus.ACTIVE
     quota: int = DEFAULT_QUOTA
+    heavy_quota: int = -1
     
     # 统计
     created_at: int = Field(default_factory=lambda: int(datetime.now().timestamp() * 1000))
@@ -110,10 +111,45 @@ class TokenInfo(BaseModel):
             self.status = TokenStatus.COOLING
         elif self.quota > 0 and self.status in [TokenStatus.COOLING, TokenStatus.EXPIRED]:
             self.status = TokenStatus.ACTIVE
-    
+
+    def update_heavy_quota(self, new_quota: int):
+        """
+        更新 heavy 配额（用于 grok-4-heavy 的 rate-limits 同步）。
+
+        注意：heavy 配额不参与 status 计算，避免误伤普通模型可用性。
+        """
+        try:
+            v = int(new_quota)
+        except Exception:
+            v = 0
+        self.heavy_quota = max(0, v)
+
+    def consume_heavy(self, effort: EffortType = EffortType.LOW) -> int:
+        """
+        消耗 heavy 配额（本地预估）。
+
+        当 heavy_quota 为 -1（未知）时，不扣减配额，仅记录一次使用。
+        """
+        cost = EFFORT_COST[effort]
+
+        self.last_used_at = int(datetime.now().timestamp() * 1000)
+        self.use_count += 1
+
+        # 成功消耗后清空失败计数
+        self.fail_count = 0
+        self.last_fail_reason = None
+
+        if self.heavy_quota < 0:
+            return 0
+
+        actual_cost = min(cost, self.heavy_quota)
+        self.heavy_quota = max(0, self.heavy_quota - actual_cost)
+        return actual_cost
+
     def reset(self):
         """重置配额到默认值"""
         self.quota = DEFAULT_QUOTA
+        self.heavy_quota = -1
         self.status = TokenStatus.ACTIVE
         self.fail_count = 0
         self.last_fail_reason = None

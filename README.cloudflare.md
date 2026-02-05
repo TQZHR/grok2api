@@ -117,6 +117,12 @@ npx wrangler deploy
 - `GET https://<你的域名或workers.dev>/health`
 - 打开 `https://<你的域名或workers.dev>/login`
 
+（可选）冒烟测试：
+
+```bash
+python scripts/smoke_test.py --base-url https://<你的域名或workers.dev>
+```
+
 默认管理员账号密码：
 - `admin / admin`
 
@@ -137,6 +143,8 @@ npx wrangler deploy
 
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`（必填）
+
+> 提示：`CLOUDFLARE_API_TOKEN` 建议使用 **API Token**（不要用 Global API Key），并确保至少包含 **Workers Scripts / D1 / Workers KV Storage** 的编辑权限；否则工作流可能无法自动创建/复用 D1/KV 或部署 Worker。
 
 然后直接 push 到 `main`（或在 Actions 页面手动 Run workflow）即可一键部署（无需你手动创建/填写 D1 或 KV 的 ID）。
 

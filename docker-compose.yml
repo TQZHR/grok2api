@@ -1,23 +1,80 @@
 services:
   grok2api:
     container_name: grok2api
-    image: ghcr.io/tqzhr/grok2api:latest
+    image: ${GROK2API_IMAGE:-ghcr.io/tqzhr/grok2api:latest}
     ports:
-      - "8000:8000"
+      - "${GROK2API_PORT:-8000}:${SERVER_PORT:-8000}"
     environment:
-      TZ: Asia/Shanghai
-      LOG_LEVEL: INFO
-      SERVER_PORT: 8000
-      SERVER_WORKERS: 1
-      SERVER_STORAGE_TYPE: local
-      # SERVER_STORAGE_URL: 
-
-      # SERVER_STORAGE_TYPE: (local, redis, mysql, pgsql) default: local
-      # SERVER_STORAGE_URL: (local mode is empty) default: empty
-      #   Redis: redis://localhost:6379/0 or redis://:password@localhost:6379/0
-      #   MySQL: mysql+aiomysql://user:pass@localhost/db
-      #   PgSQL: postgresql+asyncpg://user:pass@localhost/db
+      TZ: ${TZ:-Asia/Shanghai}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SERVER_HOST: ${SERVER_HOST:-0.0.0.0}
+      SERVER_PORT: ${SERVER_PORT:-8000}
+      SERVER_WORKERS: ${SERVER_WORKERS:-1}
+      SERVER_STORAGE_TYPE: ${SERVER_STORAGE_TYPE:-local}
+      SERVER_STORAGE_URL: "${SERVER_STORAGE_URL:-}"
+      STORAGE_WAIT_TIMEOUT: ${STORAGE_WAIT_TIMEOUT:-60}
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+    shm_size: "1gb"
+    init: true
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,urllib.request; p=os.getenv('SERVER_PORT','8000'); urllib.request.urlopen(f'http://127.0.0.1:{p}/health', timeout=2).read();"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+
+  redis:
+    profiles: ["redis"]
+    container_name: grok2api-redis
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  pgsql:
+    profiles: ["pgsql"]
+    container_name: grok2api-pgsql
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${PGSQL_DB:-grok2api}
+      POSTGRES_USER: ${PGSQL_USER:-grok2api}
+      POSTGRES_PASSWORD: ${PGSQL_PASSWORD:-grok2api}
+    volumes:
+      - pgsql-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGSQL_USER:-grok2api} -d ${PGSQL_DB:-grok2api}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  mysql:
+    profiles: ["mysql"]
+    container_name: grok2api-mysql
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DB:-grok2api}
+      MYSQL_USER: ${MYSQL_USER:-grok2api}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-grok2api}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-grok2api}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p${MYSQL_ROOT_PASSWORD:-grok2api} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  redis-data:
+  pgsql-data:
+  mysql-data:

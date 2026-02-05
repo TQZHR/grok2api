@@ -6,10 +6,11 @@ import asyncio
 import random
 from typing import List, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 
+from app.core.auth import verify_api_key
 from app.services.grok.chat import GrokChatService
 from app.services.grok.model import ModelService
 from app.services.grok.processor import ImageStreamProcessor, ImageCollectProcessor
@@ -17,6 +18,7 @@ from app.services.token import get_token_manager
 from app.services.request_stats import request_stats
 from app.core.exceptions import ValidationException, AppException, ErrorType
 from app.core.logger import logger
+from app.services.quota import enforce_daily_quota
 
 
 router = APIRouter(tags=["Images"])
@@ -99,7 +101,7 @@ async def call_grok(token: str, prompt: str, model_info) -> List[str]:
 
 
 @router.post("/images/generations")
-async def create_image(request: ImageGenerationRequest):
+async def create_image(request: ImageGenerationRequest, api_key: Optional[str] = Depends(verify_api_key)):
     """
     Image Generation API
     
@@ -116,13 +118,15 @@ async def create_image(request: ImageGenerationRequest):
     
     # 参数验证
     validate_request(request)
+
+    # Daily quota (best-effort): count by requested n
+    await enforce_daily_quota(api_key, request.model or "grok-imagine-1.0", image_count=int(request.n or 1))
     
     # 获取 token
     try:
         token_mgr = await get_token_manager()
         await token_mgr.reload_if_stale()
-        pool_name = ModelService.pool_for_model(request.model)
-        token = token_mgr.get_token(pool_name)
+        token = token_mgr.get_token_for_model(request.model)
     except Exception as e:
         logger.error(f"Failed to get token: {e}")
         try:

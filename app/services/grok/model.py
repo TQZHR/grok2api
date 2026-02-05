@@ -2,6 +2,8 @@
 Grok 模型管理服务
 """
 
+from __future__ import annotations
+
 from enum import Enum
 from typing import Optional, Tuple
 from pydantic import BaseModel, Field
@@ -25,6 +27,7 @@ class ModelInfo(BaseModel):
     """模型信息"""
     model_id: str
     grok_model: str
+    rate_limit_model: str
     model_mode: str
     tier: Tier = Field(default=Tier.BASIC)
     cost: Cost = Field(default=Cost.LOW)
@@ -41,6 +44,7 @@ class ModelService:
         ModelInfo(
             model_id="grok-3",
             grok_model="grok-3",
+            rate_limit_model="grok-3",
             model_mode="MODEL_MODE_AUTO",
             cost=Cost.LOW,
             display_name="Grok 3"
@@ -48,6 +52,7 @@ class ModelService:
         ModelInfo(
             model_id="grok-3-fast",
             grok_model="grok-3",
+            rate_limit_model="grok-3",
             cost=Cost.LOW,
             model_mode="MODEL_MODE_FAST",
             display_name="Grok 3 Fast"
@@ -55,6 +60,7 @@ class ModelService:
         ModelInfo(
             model_id="grok-4",
             grok_model="grok-4",
+            rate_limit_model="grok-4",
             model_mode="MODEL_MODE_AUTO",
             cost=Cost.LOW,
             display_name="Grok 4"
@@ -62,6 +68,7 @@ class ModelService:
         ModelInfo(
             model_id="grok-4-mini",
             grok_model="grok-4-mini-thinking-tahoe",
+            rate_limit_model="grok-4-mini-thinking-tahoe",
             model_mode="MODEL_MODE_GROK_4_MINI_THINKING",
             cost=Cost.LOW,
             display_name="Grok 4 Mini"
@@ -69,6 +76,7 @@ class ModelService:
         ModelInfo(
             model_id="grok-4-fast",
             grok_model="grok-4",
+            rate_limit_model="grok-4",
             model_mode="MODEL_MODE_FAST",
             cost=Cost.LOW,
             display_name="Grok 4 Fast"
@@ -76,6 +84,7 @@ class ModelService:
         ModelInfo(
             model_id="grok-4-heavy",
             grok_model="grok-4",
+            rate_limit_model="grok-4-heavy",
             model_mode="MODEL_MODE_HEAVY",
             cost=Cost.HIGH,
             tier=Tier.SUPER,
@@ -84,13 +93,31 @@ class ModelService:
         ModelInfo(
             model_id="grok-4.1",
             grok_model="grok-4-1-thinking-1129",
+            rate_limit_model="grok-4-1-thinking-1129",
             model_mode="MODEL_MODE_AUTO",
             cost=Cost.LOW,
             display_name="Grok 4.1"
         ),
         ModelInfo(
+            model_id="grok-4.1-fast",
+            grok_model="grok-4-1-thinking-1129",
+            rate_limit_model="grok-4-1-thinking-1129",
+            model_mode="MODEL_MODE_FAST",
+            cost=Cost.LOW,
+            display_name="Grok 4.1 Fast"
+        ),
+        ModelInfo(
+            model_id="grok-4.1-expert",
+            grok_model="grok-4-1-thinking-1129",
+            rate_limit_model="grok-4-1-thinking-1129",
+            model_mode="MODEL_MODE_EXPERT",
+            cost=Cost.LOW,
+            display_name="Grok 4.1 Expert"
+        ),
+        ModelInfo(
             model_id="grok-4.1-thinking",
             grok_model="grok-4-1-thinking-1129",
+            rate_limit_model="grok-4-1-thinking-1129",
             model_mode="MODEL_MODE_GROK_4_1_THINKING",
             cost=Cost.HIGH, 
             display_name="Grok 4.1 Thinking"
@@ -98,6 +125,7 @@ class ModelService:
         ModelInfo(
             model_id="grok-imagine-1.0",
             grok_model="grok-3",
+            rate_limit_model="grok-3",
             model_mode="MODEL_MODE_FAST",
             cost=Cost.HIGH,
             display_name="Grok Image",
@@ -107,6 +135,7 @@ class ModelService:
         ModelInfo(
             model_id="grok-imagine-1.0-video",
             grok_model="grok-3",
+            rate_limit_model="grok-3",
             model_mode="MODEL_MODE_FAST",
             cost=Cost.HIGH,
             display_name="Grok Video",
@@ -141,12 +170,31 @@ class ModelService:
         return model.grok_model, model.model_mode
 
     @classmethod
+    def rate_limit_model_for(cls, model_id: str) -> str:
+        """用于 /rest/rate-limits 的 modelName 映射。"""
+        model = cls.get(model_id)
+        return model.rate_limit_model if model else model_id
+
+    @classmethod
+    def is_heavy_bucket_model(cls, model_id: str) -> bool:
+        """是否使用 heavy 配额桶（目前仅 grok-4-heavy）。"""
+        return model_id == "grok-4-heavy"
+
+    @classmethod
     def pool_for_model(cls, model_id: str) -> str:
         """根据模型选择 Token 池"""
         model = cls.get(model_id)
         if model and model.tier == Tier.SUPER:
             return "ssoSuper"
         return "ssoBasic"
+
+    @classmethod
+    def pool_candidates_for_model(cls, model_id: str) -> list[str]:
+        """按优先级返回可用 Token 池列表。"""
+        model = cls.get(model_id)
+        if model and model.tier == Tier.SUPER:
+            return ["ssoSuper"]
+        return ["ssoBasic", "ssoSuper"]
 
 
 __all__ = ["ModelService"]

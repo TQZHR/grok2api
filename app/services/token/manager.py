@@ -178,7 +178,25 @@ class TokenManager:
             return token[4:]
         return token
 
-    async def consume(self, token_str: str, effort: EffortType = EffortType.LOW) -> bool:
+    def get_token_for_model(self, model_id: str) -> Optional[str]:
+        """按模型选择可用 Token（包含 basic->super 回退与 heavy 配额桶选择）。"""
+        from app.services.grok.model import ModelService
+
+        bucket = "heavy" if ModelService.is_heavy_bucket_model(model_id) else "normal"
+        for pool_name in ModelService.pool_candidates_for_model(model_id):
+            pool = self.pools.get(pool_name)
+            if not pool:
+                continue
+            token_info = pool.select(bucket=bucket)
+            if not token_info:
+                continue
+            token = token_info.token
+            return token[4:] if token.startswith("sso=") else token
+
+        logger.warning(f"No available token for model '{model_id}'")
+        return None
+
+    async def consume(self, token_str: str, effort: EffortType = EffortType.LOW, bucket: str = "normal") -> bool:
         """
         消耗配额（本地预估）
         
@@ -190,12 +208,14 @@ class TokenManager:
             是否成功
         """
         raw_token = token_str.replace("sso=", "")
-        
+
         for pool in self.pools.values():
             token = pool.get(raw_token)
             if token:
-                consumed = token.consume(effort)
-                logger.debug(f"Token {raw_token[:10]}...: consumed {consumed} quota, use_count={token.use_count}")
+                consumed = token.consume_heavy(effort) if bucket == "heavy" else token.consume(effort)
+                logger.debug(
+                    f"Token {raw_token[:10]}...: consumed {consumed} quota (bucket={bucket}), use_count={token.use_count}"
+                )
                 self._schedule_save()
                 return True
         
@@ -205,7 +225,7 @@ class TokenManager:
     async def sync_usage(
         self, 
         token_str: str, 
-        model_name: str, 
+        model_id: str, 
         fallback_effort: EffortType = EffortType.LOW,
         consume_on_fail: bool = True,
         is_usage: bool = True
@@ -238,23 +258,36 @@ class TokenManager:
             logger.warning(f"Token {raw_token[:10]}...: not found for sync")
             return False
 
+        from app.services.grok.model import ModelService
+
+        bucket = "heavy" if ModelService.is_heavy_bucket_model(model_id) else "normal"
+        rate_limit_model = ModelService.rate_limit_model_for(model_id)
+
         # 尝试 API 同步
         try:
             from app.services.grok.usage import UsageService
             
             usage_service = UsageService()
-            result = await usage_service.get(token_str, model_name=model_name)
+            result = await usage_service.get(token_str, model_name=rate_limit_model)
             
             if result and "remainingTokens" in result:
-                old_quota = target_token.quota
-                new_quota = result["remainingTokens"]
-                
-                target_token.update_quota(new_quota)
+                try:
+                    new_quota = int(result["remainingTokens"])
+                except Exception:
+                    new_quota = 0
+
+                if bucket == "heavy":
+                    old_quota = target_token.heavy_quota
+                    target_token.update_heavy_quota(new_quota)
+                else:
+                    old_quota = target_token.quota
+                    target_token.update_quota(new_quota)
+
                 target_token.record_success(is_usage=is_usage)
-                
-                consumed = max(0, old_quota - new_quota)
+
+                consumed = max(0, old_quota - new_quota) if old_quota >= 0 else 0
                 logger.info(
-                    f"Token {raw_token[:10]}...: synced quota "
+                    f"Token {raw_token[:10]}...: synced quota (bucket={bucket}, model={rate_limit_model}) "
                     f"{old_quota} -> {new_quota} (consumed: {consumed}, use_count: {target_token.use_count})"
                 )
                 
@@ -267,7 +300,7 @@ class TokenManager:
         # 降级：本地预估扣费
         if consume_on_fail:
             logger.debug(f"Token {raw_token[:10]}...: using local consumption")
-            return await self.consume(token_str, fallback_effort)
+            return await self.consume(token_str, fallback_effort, bucket=bucket)
         else:
             logger.debug(f"Token {raw_token[:10]}...: sync failed, skipping local consumption")
             return False
