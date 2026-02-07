@@ -1,5 +1,5 @@
 import type { Env } from "../env";
-import { dbAll, dbRun } from "../db";
+import { dbAll, dbFirst, dbRun } from "../db";
 import { nowMs, formatUtcMs } from "../utils/time";
 
 export interface RequestLogRow {
@@ -20,9 +20,14 @@ export interface RequestLogRow {
   error: string;
 }
 
+type RequestLogInsert = Omit<RequestLogRow, "id" | "time" | "timestamp" | "total_tokens" | "input_tokens" | "output_tokens" | "reasoning_tokens" | "cached_tokens"> &
+  Partial<Pick<RequestLogRow, "total_tokens" | "input_tokens" | "output_tokens" | "reasoning_tokens" | "cached_tokens">> & {
+    id?: string;
+  };
+
 export async function addRequestLog(
   db: Env["DB"],
-  entry: Omit<RequestLogRow, "id" | "time" | "timestamp"> & { id?: string },
+  entry: RequestLogInsert,
 ): Promise<void> {
   const ts = nowMs();
   const id = entry.id ?? String(ts);

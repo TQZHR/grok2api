@@ -27,6 +27,9 @@ import { nowMs } from "../utils/time";
 import { arrayBufferToBase64 } from "../utils/base64";
 import { upsertCacheRow } from "../repo/cache";
 
+const IMAGE_GENERATION_MODEL_ID = "grok-imagine-1.0";
+const IMAGE_EDIT_MODEL_ID = "grok-imagine-1.0-edit";
+
 function openAiError(message: string, code: string): Record<string, unknown> {
   return { error: { message, type: "invalid_request_error", code } };
 }
@@ -500,6 +503,43 @@ function getTokenSuffix(token: string): string {
 
 function parseImageModel(input: unknown, fallback: string): string {
   return String(input ?? fallback).trim() || fallback;
+}
+
+function parseImagePrompt(input: unknown): string {
+  if (input === undefined || input === null) return "";
+  if (typeof input === "string") return input.trim();
+  if (Array.isArray(input)) return input.map((v) => String(v ?? "")).join(" ").trim();
+  return String(input).trim();
+}
+
+function parseImageCount(input: unknown): number {
+  const raw = Number(input);
+  if (!Number.isFinite(raw)) return 1;
+  const value = Math.floor(raw);
+  return Math.max(1, Math.min(10, value));
+}
+
+function parseImageSize(input: unknown): string {
+  const value = String(input ?? "").trim().toLowerCase();
+  if (!value) return "1024x1024";
+  const allowed = new Set([
+    "256x256",
+    "512x512",
+    "1024x1024",
+    "1024x576",
+    "1280x720",
+    "1536x864",
+    "576x1024",
+    "720x1280",
+    "864x1536",
+    "1024x1536",
+    "512x768",
+    "768x1024",
+    "1536x1024",
+    "768x512",
+    "1024x768",
+  ]);
+  return allowed.has(value) ? value : "1024x1024";
 }
 
 function parseImageStream(input: unknown): boolean {
@@ -1420,6 +1460,7 @@ openAiRoutes.post("/images/generations", async (c) => {
   const keyName = c.get("apiAuth").name ?? "Unknown";
   const origin = new URL(c.req.url).origin;
 
+  let prompt = "";
   let requestedModel = IMAGE_GENERATION_MODEL_ID;
   try {
     const body = (await c.req.json()) as {
@@ -1431,7 +1472,7 @@ openAiRoutes.post("/images/generations", async (c) => {
       stream?: unknown;
       response_format?: unknown;
     };
-    const prompt = parseImagePrompt(body.prompt);
+    prompt = parseImagePrompt(body.prompt);
     const promptErr = nonEmptyPromptOrError(prompt);
     if (promptErr) return c.json(openAiError(promptErr.message, promptErr.code), 400);
 
@@ -1505,6 +1546,11 @@ openAiRoutes.post("/images/generations", async (c) => {
                 status,
                 key_name: keyName,
                 token_suffix: getTokenSuffix(experimentalToken.token),
+                total_tokens: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                reasoning_tokens: 0,
+                cached_tokens: 0,
                 error: status === 200 ? "" : "stream_error",
               });
             },
@@ -1586,6 +1632,11 @@ openAiRoutes.post("/images/generations", async (c) => {
             status,
             key_name: keyName,
             token_suffix: getTokenSuffix(chosen.token),
+            total_tokens: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            reasoning_tokens: 0,
+            cached_tokens: 0,
             error: status === 200 ? "" : "stream_error",
           });
         },
@@ -1682,7 +1733,7 @@ openAiRoutes.post("/images/generations", async (c) => {
         keyName,
         status: 400,
         error: message,
-        prompt: imageCallPrompt("generation", prompt),
+        prompt: imageCallPrompt("generation", prompt || ""),
       });
       return c.json(openAiError(message, "content_policy_violation"), 400);
     }
@@ -1694,7 +1745,7 @@ openAiRoutes.post("/images/generations", async (c) => {
       keyName,
       status: 500,
       error: message,
-      prompt: imageCallPrompt("generation", prompt),
+      prompt: imageCallPrompt("generation", prompt || ""),
     });
     return c.json(openAiError(message || "Internal error", "internal_error"), 500);
   }
@@ -1707,10 +1758,11 @@ openAiRoutes.post("/images/edits", async (c) => {
   const origin = new URL(c.req.url).origin;
   const maxImageBytes = 50 * 1024 * 1024;
 
+  let prompt = "";
   let requestedModel = IMAGE_EDIT_MODEL_ID;
   try {
     const form = await c.req.formData();
-    const prompt = parseImagePrompt(form.get("prompt"));
+    prompt = parseImagePrompt(form.get("prompt"));
     const promptErr = nonEmptyPromptOrError(prompt);
     if (promptErr) return c.json(openAiError(promptErr.message, promptErr.code), 400);
 
@@ -1825,6 +1877,7 @@ openAiRoutes.post("/images/edits", async (c) => {
             cookie,
             settings: settingsBundle.grok,
             n,
+            prompt: imageCallPrompt("edit", prompt),
             onFinish: async ({ status, duration }) => {
               await addRequestLog(c.env.DB, {
                 ip,
@@ -1833,6 +1886,11 @@ openAiRoutes.post("/images/edits", async (c) => {
                 status,
                 key_name: keyName,
                 token_suffix: getTokenSuffix(chosen.token),
+                total_tokens: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                reasoning_tokens: 0,
+                cached_tokens: 0,
                 error: status === 200 ? "" : "stream_error",
               });
             },
@@ -1896,6 +1954,11 @@ openAiRoutes.post("/images/edits", async (c) => {
             status,
             key_name: keyName,
             token_suffix: getTokenSuffix(chosen.token),
+            total_tokens: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            reasoning_tokens: 0,
+            cached_tokens: 0,
             error: status === 200 ? "" : "stream_error",
           });
         },
@@ -1979,7 +2042,7 @@ openAiRoutes.post("/images/edits", async (c) => {
         keyName,
         status: 400,
         error: message,
-        prompt: imageCallPrompt("edit", prompt),
+        prompt: imageCallPrompt("edit", prompt || ""),
       });
       return c.json(openAiError(message, "content_policy_violation"), 400);
     }
@@ -1991,7 +2054,7 @@ openAiRoutes.post("/images/edits", async (c) => {
       keyName,
       status: 500,
       error: message,
-      prompt: imageCallPrompt("edit", prompt),
+      prompt: imageCallPrompt("edit", prompt || ""),
     });
     return c.json(openAiError(message || "Internal error", "internal_error"), 500);
   }

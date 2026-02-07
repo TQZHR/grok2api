@@ -1260,6 +1260,11 @@ adminRoutes.post("/api/logs/add", requireAdminAuth, async (c) => {
       status: Number(body.status ?? 200),
       key_name: "admin",
       token_suffix: "",
+      total_tokens: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      reasoning_tokens: 0,
+      cached_tokens: 0,
       error: String(body.error ?? ""),
     });
     return c.json({ success: true });
