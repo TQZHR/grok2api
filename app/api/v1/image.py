@@ -29,6 +29,7 @@ from app.services.grok.model import ModelService
 from app.services.grok.processor import ImageCollectProcessor, ImageStreamProcessor
 from app.services.quota import enforce_daily_quota
 from app.services.request_stats import request_stats
+from app.services.token_usage import build_image_usage
 from app.services.token import get_token_manager
 
 
@@ -555,6 +556,23 @@ async def _record_request(model_id: str, success: bool):
         pass
 
 
+async def _record_request_with_usage(model_id: str, success: bool, prompt: str, success_count: int = 1):
+    try:
+        usage = build_image_usage(prompt, success_count=success_count)
+        raw = usage.get("_raw") or {}
+        await request_stats.record_request(
+            model_id,
+            success=success,
+            total_tokens=int(usage.get("total_tokens", 0) or 0),
+            input_tokens=int(usage.get("input_tokens", 0) or 0),
+            output_tokens=int(usage.get("output_tokens", 0) or 0),
+            reasoning_tokens=int(raw.get("reasoning_tokens", 0) or 0),
+            cached_tokens=int(raw.get("cached_tokens", 0) or 0),
+        )
+    except Exception:
+        pass
+
+
 async def _get_token_for_model(model_id: str):
     """获取指定模型可用 token，失败时抛出统一异常"""
     try:
@@ -704,7 +722,12 @@ async def create_image(
                                 consume_on_fail=True,
                                 is_usage=True,
                             )
-                            await _record_request(model_info.model_id, True)
+                            await _record_request_with_usage(
+                                model_info.model_id,
+                                True,
+                                f"Image Generation: {request.prompt}",
+                                success_count=n,
+                            )
                         else:
                             await _record_request(model_info.model_id, False)
                     except Exception:
@@ -752,7 +775,12 @@ async def create_image(
                             consume_on_fail=True,
                             is_usage=True,
                         )
-                        await _record_request(model_info.model_id, True)
+                        await _record_request_with_usage(
+                            model_info.model_id,
+                            True,
+                            f"Image Generation: {request.prompt}",
+                            success_count=n,
+                        )
                     else:
                         await _record_request(model_info.model_id, False)
                 except Exception:
@@ -811,7 +839,15 @@ async def create_image(
                 consume_on_fail=True,
                 is_usage=True,
             )
-        await _record_request(model_info.model_id, bool(success))
+        if success:
+            await _record_request_with_usage(
+                model_info.model_id,
+                True,
+                f"Image Generation: {request.prompt}",
+                success_count=n,
+            )
+        else:
+            await _record_request(model_info.model_id, False)
     except Exception:
         pass
 
@@ -964,7 +1000,12 @@ async def edit_image(
                                     consume_on_fail=True,
                                     is_usage=True,
                                 )
-                                await _record_request(model_info.model_id, True)
+                                await _record_request_with_usage(
+                                    model_info.model_id,
+                                    True,
+                                    f"Image Edit: {edit_request.prompt}",
+                                    success_count=n,
+                                )
                             else:
                                 await _record_request(model_info.model_id, False)
                         except Exception:
@@ -1015,7 +1056,12 @@ async def edit_image(
                             consume_on_fail=True,
                             is_usage=True,
                         )
-                        await _record_request(model_info.model_id, True)
+                        await _record_request_with_usage(
+                            model_info.model_id,
+                            True,
+                            f"Image Edit: {edit_request.prompt}",
+                            success_count=n,
+                        )
                     else:
                         await _record_request(model_info.model_id, False)
                 except Exception:
@@ -1100,7 +1146,15 @@ async def edit_image(
                 consume_on_fail=True,
                 is_usage=True,
             )
-        await _record_request(model_info.model_id, bool(success))
+        if success:
+            await _record_request_with_usage(
+                model_info.model_id,
+                True,
+                f"Image Edit: {edit_request.prompt}",
+                success_count=n,
+            )
+        else:
+            await _record_request(model_info.model_id, False)
     except Exception:
         pass
 

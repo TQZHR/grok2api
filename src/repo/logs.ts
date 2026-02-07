@@ -12,6 +12,11 @@ export interface RequestLogRow {
   status: number;
   key_name: string;
   token_suffix: string;
+  total_tokens: number;
+  input_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
+  cached_tokens: number;
   error: string;
 }
 
@@ -24,7 +29,7 @@ export async function addRequestLog(
   const time = formatUtcMs(ts);
   await dbRun(
     db,
-    "INSERT INTO request_logs(id,time,timestamp,ip,model,duration,status,key_name,token_suffix,error) VALUES(?,?,?,?,?,?,?,?,?,?)",
+    "INSERT INTO request_logs(id,time,timestamp,ip,model,duration,status,key_name,token_suffix,total_tokens,input_tokens,output_tokens,reasoning_tokens,cached_tokens,error) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     [
       id,
       time,
@@ -35,6 +40,11 @@ export async function addRequestLog(
       entry.status,
       entry.key_name,
       entry.token_suffix,
+      (entry as any).total_tokens ?? 0,
+      (entry as any).input_tokens ?? 0,
+      (entry as any).output_tokens ?? 0,
+      (entry as any).reasoning_tokens ?? 0,
+      (entry as any).cached_tokens ?? 0,
       entry.error,
     ],
   );
@@ -43,7 +53,7 @@ export async function addRequestLog(
 export async function getRequestLogs(db: Env["DB"], limit = 1000): Promise<RequestLogRow[]> {
   return dbAll<RequestLogRow>(
     db,
-    "SELECT id,time,timestamp,ip,model,duration,status,key_name,token_suffix,error FROM request_logs ORDER BY timestamp DESC LIMIT ?",
+    "SELECT id,time,timestamp,ip,model,duration,status,key_name,token_suffix,total_tokens,input_tokens,output_tokens,reasoning_tokens,cached_tokens,error FROM request_logs ORDER BY timestamp DESC LIMIT ?",
     [limit],
   );
 }
@@ -56,7 +66,17 @@ export interface RequestStats {
   hourly: Array<{ hour: string; success: number; failed: number }>;
   daily: Array<{ date: string; success: number; failed: number }>;
   models: Array<{ model: string; count: number }>;
-  summary: { total: number; success: number; failed: number; success_rate: number };
+  summary: {
+    total: number;
+    success: number;
+    failed: number;
+    success_rate: number;
+    total_tokens: number;
+    input_tokens: number;
+    output_tokens: number;
+    reasoning_tokens: number;
+    cached_tokens: number;
+  };
 }
 
 function isSuccessStatus(status: number): boolean {
@@ -152,5 +172,32 @@ export async function getRequestStats(db: Env["DB"]): Promise<RequestStats> {
   const total = success + failed;
   const success_rate = total > 0 ? Math.round((success / total) * 1000) / 10 : 0;
 
-  return { hourly, daily, models, summary: { total, success, failed, success_rate } };
+  const tokenSumRow = await dbFirst<{
+    total_tokens: number;
+    input_tokens: number;
+    output_tokens: number;
+    reasoning_tokens: number;
+    cached_tokens: number;
+  }>(
+    db,
+    "SELECT SUM(total_tokens) as total_tokens, SUM(input_tokens) as input_tokens, SUM(output_tokens) as output_tokens, SUM(reasoning_tokens) as reasoning_tokens, SUM(cached_tokens) as cached_tokens FROM request_logs WHERE timestamp >= ?",
+    [since24h],
+  );
+
+  return {
+    hourly,
+    daily,
+    models,
+    summary: {
+      total,
+      success,
+      failed,
+      success_rate,
+      total_tokens: tokenSumRow?.total_tokens ?? 0,
+      input_tokens: tokenSumRow?.input_tokens ?? 0,
+      output_tokens: tokenSumRow?.output_tokens ?? 0,
+      reasoning_tokens: tokenSumRow?.reasoning_tokens ?? 0,
+      cached_tokens: tokenSumRow?.cached_tokens ?? 0,
+    },
+  };
 }

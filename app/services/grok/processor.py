@@ -11,6 +11,7 @@ from typing import Any, AsyncGenerator, Optional, AsyncIterable, List
 from app.core.config import get_config
 from app.core.logger import logger
 from app.services.grok.assets import DownloadService
+from app.services.token_usage import build_chat_usage
 
 
 ASSET_URL = "https://assets.grok.com/"
@@ -211,7 +212,7 @@ class CollectProcessor(BaseProcessor):
         super().__init__(model, token)
         self.image_format = get_config("app.image_format", "url")
     
-    async def process(self, response: AsyncIterable[bytes]) -> dict[str, Any]:
+    async def process(self, response: AsyncIterable[bytes], prompt_messages: Optional[list[dict]] = None) -> dict[str, Any]:
         """处理并收集完整响应"""
         response_id = ""
         fingerprint = ""
@@ -261,6 +262,7 @@ class CollectProcessor(BaseProcessor):
         finally:
             await self.close()
         
+        usage = build_chat_usage(prompt_messages or [], content)
         return {
             "id": response_id,
             "object": "chat.completion",
@@ -272,11 +274,7 @@ class CollectProcessor(BaseProcessor):
                 "message": {"role": "assistant", "content": content, "refusal": None, "annotations": []},
                 "finish_reason": "stop"
             }],
-            "usage": {
-                "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
-                "prompt_tokens_details": {"cached_tokens": 0, "text_tokens": 0, "audio_tokens": 0, "image_tokens": 0},
-                "completion_tokens_details": {"text_tokens": 0, "audio_tokens": 0, "reasoning_tokens": 0}
-            }
+            "usage": usage
         }
 
 
