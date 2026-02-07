@@ -81,12 +81,21 @@
         <div id="image-mode-hint" class="text-xs text-[var(--accents-5)] mb-2 hidden">
           当前为新生图方式：支持实时瀑布流、宽高比与并发数量。
         </div>
+        <div id="image-run-mode-wrap" class="grid grid-cols-12 gap-3 items-end mb-3 hidden">
+          <div class="col-span-12 md:col-span-3">
+            <label class="field-label">运行模式</label>
+            <select id="image-run-mode" class="geist-input h-[34px]">
+              <option value="single">single（单次）</option>
+              <option value="continuous">continuous（持续）</option>
+            </select>
+          </div>
+        </div>
         <div class="grid grid-cols-12 gap-3 items-end">
           <div class="col-span-12 md:col-span-4">
             <label class="field-label">Prompt</label>
             <textarea id="image-prompt" class="geist-input h-24" placeholder="描述你要生成的图片..."></textarea>
           </div>
-          <div class="col-span-6 md:col-span-2">
+          <div id="image-n-wrap" class="col-span-6 md:col-span-2">
             <label class="field-label">数量 n</label>
             <input id="image-n" type="number" class="geist-input" min="1" max="10" value="1" />
           </div>
@@ -108,9 +117,25 @@
               <option value="3">3</option>
             </select>
           </div>
-          <div class="col-span-12 md:col-span-2 flex justify-end">
-            <button class="geist-button text-xs px-4" onclick="generateImage()">生成</button>
+          <div id="image-generate-wrap" class="col-span-12 md:col-span-2 flex justify-end">
+            <button id="image-generate-btn" class="geist-button text-xs px-4" onclick="generateImage()">生成</button>
           </div>
+        </div>
+        <div id="image-continuous-wrap" class="mt-4 hidden">
+          <div class="imagine-actions mb-3">
+            <button id="image-start-btn" class="geist-button-outline text-xs px-3" onclick="startImageContinuous()">开始</button>
+            <button id="image-stop-btn" class="geist-button-outline text-xs px-3" onclick="stopImageContinuous()" disabled>停止</button>
+            <button id="image-clear-btn" class="geist-button-outline text-xs px-3" onclick="clearImageWaterfall()">清空</button>
+          </div>
+          <div class="imagine-metrics mb-3">
+            <div class="imagine-metric"><span>状态</span><b id="image-status-text">未连接</b></div>
+            <div class="imagine-metric"><span>图片数量</span><b id="image-count-value">0</b></div>
+            <div class="imagine-metric"><span>活跃任务</span><b id="image-active-value">0</b></div>
+            <div class="imagine-metric"><span>平均耗时</span><b id="image-latency-value">-</b></div>
+            <div class="imagine-metric"><span>最后错误</span><b id="image-error-value">-</b></div>
+          </div>
+          <div id="image-empty-state" class="result-placeholder">等待开始持续生图...</div>
+          <div id="image-waterfall" class="image-waterfall"></div>
         </div>
         <div id="image-results" class="results-grid mt-4"></div>
       </div>
@@ -174,7 +199,7 @@
   </main>
 
   <script src="/static/common/toast.js"></script>
-  <script src="/static/chat/chat.js?v=3"></script>
+  <script src="/static/chat/chat.js?v=4"></script>
 </body>
 
 </html>

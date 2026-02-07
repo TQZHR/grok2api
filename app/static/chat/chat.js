@@ -1,4 +1,4 @@
-const STORAGE_KEY = 'grok2api_user_api_key';
+﻿const STORAGE_KEY = 'grok2api_user_api_key';
 
 let currentTab = 'chat';
 let models = [];
@@ -7,6 +7,15 @@ let chatAttachments = []; // { file, previewUrl }
 let videoAttachments = [];
 let imageGenerationMethod = 'legacy';
 let imageGenerationExperimental = false;
+let imageContinuousSockets = [];
+let imageContinuousRunning = false;
+let imageContinuousCount = 0;
+let imageContinuousLatencyTotal = 0;
+let imageContinuousLatencyCount = 0;
+let imageContinuousActive = 0;
+let imageContinuousLastError = '';
+let imageContinuousRunToken = 0;
+let imageContinuousDesiredConcurrency = 1;
 
 function q(id) {
   return document.getElementById(id);
@@ -206,6 +215,15 @@ async function init() {
   if (!q('api-key-input').value) q('api-key-input').value = saved;
 
   bindFileInputs();
+  q('image-run-mode')?.addEventListener('change', () => {
+    if (getImageRunMode() !== 'continuous') {
+      stopImageContinuous();
+    }
+    updateImageModeUI();
+  });
+  window.addEventListener('beforeunload', () => {
+    stopImageContinuous();
+  });
   await refreshModels();
   await refreshImageGenerationMethod();
 
@@ -254,7 +272,7 @@ function renderAttachments(kind) {
   list.forEach((it, idx) => {
     const div = document.createElement('div');
     div.className = 'attach-item';
-    div.innerHTML = `<img src="${it.previewUrl}" alt="img"><button title="移除">×</button>`;
+    div.innerHTML = `<img src="${it.previewUrl}" alt="img"><button title="绉婚櫎">脳</button>`;
     div.querySelector('button').addEventListener('click', () => {
       try { URL.revokeObjectURL(it.previewUrl); } catch (e) {}
       list.splice(idx, 1);
@@ -264,17 +282,371 @@ function renderAttachments(kind) {
   });
 }
 
+function getImageRunMode() {
+  const value = String(q('image-run-mode')?.value || 'single').trim().toLowerCase();
+  return value === 'continuous' ? 'continuous' : 'single';
+}
+
+function getImageContinuousConcurrency() {
+  return Math.max(1, Math.min(3, Math.floor(Number(q('image-concurrency')?.value || 1) || 1)));
+}
+
+function getImageContinuousActiveCount() {
+  return imageContinuousSockets.filter((it) => it && it.active && !it.closed).length;
+}
+
+function getImageContinuousOpenCount() {
+  return imageContinuousSockets.filter((it) => {
+    const ws = it?.ws;
+    if (!ws || it?.closed) return false;
+    return ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING;
+  }).length;
+}
+
+function setImageStatusText(text) {
+  const el = q('image-status-text');
+  if (el) el.textContent = String(text || '-');
+}
+
+function updateImageContinuousStats() {
+  imageContinuousActive = getImageContinuousActiveCount();
+  const countEl = q('image-count-value');
+  const activeEl = q('image-active-value');
+  const latencyEl = q('image-latency-value');
+  const errorEl = q('image-error-value');
+  if (countEl) countEl.textContent = String(imageContinuousCount);
+  if (activeEl) activeEl.textContent = String(imageContinuousActive);
+  if (latencyEl) {
+    if (imageContinuousLatencyCount > 0) {
+      latencyEl.textContent = `${Math.round(imageContinuousLatencyTotal / imageContinuousLatencyCount)}ms`;
+    } else {
+      latencyEl.textContent = '-';
+    }
+  }
+  if (errorEl) errorEl.textContent = imageContinuousLastError || '-';
+}
+
+function updateImageContinuousButtons() {
+  const isContinuous = imageGenerationExperimental && getImageRunMode() === 'continuous';
+  const startBtn = q('image-start-btn');
+  const stopBtn = q('image-stop-btn');
+  if (startBtn) startBtn.disabled = !isContinuous || imageContinuousRunning;
+  if (stopBtn) stopBtn.disabled = !isContinuous || !imageContinuousRunning;
+}
+
+function updateImageRunModeUI() {
+  const isContinuous = imageGenerationExperimental && getImageRunMode() === 'continuous';
+  const nWrap = q('image-n-wrap');
+  const generateWrap = q('image-generate-wrap');
+  const resultBox = q('image-results');
+  const continuousWrap = q('image-continuous-wrap');
+  const emptyState = q('image-empty-state');
+  const waterfall = q('image-waterfall');
+
+  if (nWrap) nWrap.classList.toggle('hidden', isContinuous);
+  if (generateWrap) generateWrap.classList.toggle('hidden', isContinuous);
+  if (resultBox) resultBox.classList.toggle('hidden', isContinuous);
+  if (continuousWrap) continuousWrap.classList.toggle('hidden', !isContinuous);
+  if (resultBox) resultBox.classList.remove('waterfall-layout');
+
+  if (emptyState && waterfall) {
+    emptyState.classList.toggle('hidden', waterfall.children.length > 0);
+  }
+
+  if (isContinuous && imageContinuousRunning) {
+    setImageStatusText(imageContinuousActive > 0 ? 'Running' : 'Connecting');
+  } else if (isContinuous) {
+    setImageStatusText('Idle');
+  }
+
+  updateImageContinuousButtons();
+  updateImageContinuousStats();
+}
+
 function updateImageModeUI() {
+  const isExperimental = imageGenerationExperimental;
   const hint = q('image-mode-hint');
   const aspectWrap = q('image-aspect-wrap');
   const concurrencyWrap = q('image-concurrency-wrap');
-  const resultBox = q('image-results');
-  const isExperimental = imageGenerationExperimental;
+  const runModeWrap = q('image-run-mode-wrap');
+  const runMode = q('image-run-mode');
+
+  if (!isExperimental && imageContinuousRunning) {
+    stopImageContinuous();
+  }
 
   if (hint) hint.classList.toggle('hidden', !isExperimental);
   if (aspectWrap) aspectWrap.classList.toggle('hidden', !isExperimental);
   if (concurrencyWrap) concurrencyWrap.classList.toggle('hidden', !isExperimental);
-  if (resultBox) resultBox.classList.toggle('waterfall-layout', isExperimental);
+  if (runModeWrap) runModeWrap.classList.toggle('hidden', !isExperimental);
+  if (runMode && !isExperimental) runMode.value = 'single';
+
+  updateImageRunModeUI();
+}
+
+function clearImageContinuousError() {
+  imageContinuousLastError = '';
+  updateImageContinuousStats();
+}
+
+function setImageContinuousError(message) {
+  imageContinuousLastError = String(message || '').trim() || 'unknown';
+  updateImageContinuousStats();
+}
+
+function resetImageContinuousMetrics(resetCount) {
+  if (resetCount) imageContinuousCount = 0;
+  imageContinuousLatencyTotal = 0;
+  imageContinuousLatencyCount = 0;
+  imageContinuousActive = 0;
+  clearImageContinuousError();
+  updateImageContinuousStats();
+}
+
+function appendWaterfallImage(item, connectionIndex) {
+  const src = pickImageSrc(item);
+  if (!src) return;
+
+  const waterfall = q('image-waterfall');
+  if (!waterfall) return;
+
+  const seq = Number(item?.sequence) || waterfall.children.length + 1;
+  const elapsed = Math.max(0, Number(item?.elapsed_ms) || 0);
+  const ratio = String(item?.aspect_ratio || '').trim();
+
+  const card = document.createElement('div');
+  card.className = 'waterfall-item';
+  card.innerHTML = `
+    <img alt="image" src="${src}" />
+    <div class="waterfall-meta">
+      <span>#${seq} 路 WS${connectionIndex + 1}</span>
+      <span>${ratio || '-'} 路 ${elapsed > 0 ? `${elapsed}ms` : '-'}</span>
+    </div>
+  `;
+  waterfall.prepend(card);
+
+  imageContinuousCount += 1;
+  if (elapsed > 0) {
+    imageContinuousLatencyTotal += elapsed;
+    imageContinuousLatencyCount += 1;
+  }
+
+  const emptyState = q('image-empty-state');
+  if (emptyState) emptyState.classList.add('hidden');
+  updateImageContinuousStats();
+}
+
+function clearImageWaterfall() {
+  const waterfall = q('image-waterfall');
+  const emptyState = q('image-empty-state');
+  if (waterfall) waterfall.innerHTML = '';
+  if (emptyState) emptyState.classList.remove('hidden');
+  resetImageContinuousMetrics(true);
+}
+
+function buildImagineWsUrl() {
+  const key = getUserApiKey();
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url = new URL('/api/v1/admin/imagine/ws', `${proto}//${window.location.host}`);
+  if (key) url.searchParams.set('api_key', key);
+  return url.toString();
+}
+
+function parseWsMessage(raw) {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    return null;
+  }
+}
+
+function openImageContinuousSocket(socketIndex, runToken, prompt, aspectRatio, attempt = 0) {
+  const wsUrl = buildImagineWsUrl();
+  const ws = new WebSocket(wsUrl);
+  const socketState = {
+    index: socketIndex,
+    ws,
+    runToken,
+    attempt,
+    active: false,
+    closed: false,
+    hadError: false,
+    lastError: '',
+    runId: '',
+  };
+  imageContinuousSockets.push(socketState);
+  updateImageContinuousStats();
+
+  ws.onopen = () => {
+    if (!imageContinuousRunning || runToken !== imageContinuousRunToken || getImageRunMode() !== 'continuous') {
+      try { ws.close(1000, 'stale'); } catch (e) {}
+      return;
+    }
+    clearImageContinuousError();
+    ws.send(JSON.stringify({ type: 'start', prompt, aspect_ratio: aspectRatio }));
+  };
+
+  ws.onmessage = (event) => {
+    const data = parseWsMessage(event?.data);
+    if (!data || runToken !== imageContinuousRunToken) return;
+    const msgType = String(data?.type || '').trim();
+
+    if (msgType === 'status') {
+      const status = String(data?.status || '').trim().toLowerCase();
+      socketState.runId = String(data?.run_id || socketState.runId || '');
+      socketState.active = status === 'running';
+      updateImageContinuousStats();
+      if (imageContinuousRunning) {
+        if (status === 'running') {
+          clearImageContinuousError();
+          setImageStatusText('Running');
+        }
+        if (status === 'stopped') setImageStatusText('Stopped');
+      }
+      updateImageContinuousButtons();
+      return;
+    }
+
+    if (msgType === 'image') {
+      socketState.active = true;
+      clearImageContinuousError();
+      appendWaterfallImage(data, socketIndex);
+      if (imageContinuousRunning) setImageStatusText('Running');
+      updateImageContinuousButtons();
+      return;
+    }
+
+    if (msgType === 'error') {
+      const message = String(data?.message || 'unknown error').trim() || 'unknown error';
+      setImageContinuousError(message);
+      if (imageContinuousRunning) setImageStatusText('Running (with errors)');
+      return;
+    }
+
+    if (msgType === 'pong') {
+      if (imageContinuousRunning && imageContinuousActive <= 0) setImageStatusText('Connected');
+    }
+  };
+
+  ws.onerror = () => {
+    if (runToken !== imageContinuousRunToken) return;
+    socketState.hadError = true;
+    socketState.lastError = `WS${socketIndex + 1} connection error`;
+  };
+
+  ws.onclose = (event) => {
+    socketState.closed = true;
+    socketState.active = false;
+    updateImageContinuousStats();
+
+    if (runToken !== imageContinuousRunToken) return;
+    if (imageContinuousRunning) {
+      const stillActive = getImageContinuousActiveCount();
+      const stillOpen = getImageContinuousOpenCount();
+
+      if (event?.code === 1008 && stillActive <= 0 && stillOpen <= 0) {
+        setImageContinuousError('WebSocket auth rejected. Check API key.');
+        setImageStatusText('Auth failed');
+      } else if (socketState.hadError && stillActive <= 0 && stillOpen <= 0) {
+        const closeCode = Number(event?.code || 0);
+        const closeReason = String(event?.reason || '').trim();
+        if (closeCode > 0) {
+          const suffix = closeReason ? `: ${closeReason}` : '';
+          setImageContinuousError(`WebSocket closed (${closeCode})${suffix}`);
+        } else {
+          setImageContinuousError(socketState.lastError || `WS${socketIndex + 1} connection error`);
+        }
+        setImageStatusText('Disconnected');
+      }
+
+      if (
+        event?.code !== 1000 &&
+        event?.code !== 1008 &&
+        socketState.attempt < 1 &&
+        getImageRunMode() === 'continuous' &&
+        imageGenerationExperimental
+      ) {
+        setTimeout(() => {
+          if (!imageContinuousRunning || runToken !== imageContinuousRunToken) return;
+          if (getImageContinuousOpenCount() >= imageContinuousDesiredConcurrency) return;
+          openImageContinuousSocket(socketIndex, runToken, prompt, aspectRatio, socketState.attempt + 1);
+        }, 1200);
+      }
+
+      if (stillActive <= 0 && stillOpen <= 0 && event?.code === 1000) {
+        setImageStatusText('Stopped');
+      }
+      updateImageContinuousButtons();
+    }
+  };
+}
+
+function stopImageContinuous() {
+  imageContinuousRunToken += 1;
+  imageContinuousRunning = false;
+  imageContinuousActive = 0;
+
+  imageContinuousSockets.forEach((state) => {
+    const ws = state?.ws;
+    if (!ws) return;
+    try {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'stop' }));
+      }
+    } catch (e) {}
+    try {
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close(1000, 'client stop');
+      }
+    } catch (e) {}
+    state.closed = true;
+    state.active = false;
+  });
+  imageContinuousSockets = [];
+
+  if (imageGenerationExperimental && getImageRunMode() === 'continuous') {
+    setImageStatusText('Stopped');
+  } else {
+    setImageStatusText('Idle');
+  }
+  updateImageContinuousButtons();
+  updateImageContinuousStats();
+}
+
+function startImageContinuous() {
+  if (!imageGenerationExperimental || getImageRunMode() !== 'continuous') {
+    return;
+  }
+  const prompt = String(q('image-prompt')?.value || '').trim();
+  if (!prompt) {
+    showToast('Please input prompt', 'warning');
+    return;
+  }
+  if (!getUserApiKey()) {
+    showToast('Please input API key first', 'warning');
+    return;
+  }
+
+  const aspectRatio = String(q('image-aspect')?.value || '2:3').trim() || '2:3';
+  const concurrency = getImageContinuousConcurrency();
+  const token = imageContinuousRunToken + 1;
+  imageContinuousDesiredConcurrency = concurrency;
+
+  stopImageContinuous();
+  imageContinuousRunToken = token;
+  imageContinuousRunning = true;
+  clearImageContinuousError();
+  imageContinuousActive = 0;
+  if (!q('image-waterfall')?.children?.length) resetImageContinuousMetrics(true);
+
+  setImageStatusText('Connecting');
+  updateImageContinuousButtons();
+  updateImageContinuousStats();
+
+  for (let i = 0; i < concurrency; i += 1) {
+    openImageContinuousSocket(i, token, prompt, aspectRatio);
+  }
 }
 
 function isExperimentalImageMethod(method) {
@@ -294,6 +666,7 @@ async function refreshImageGenerationMethod() {
   imageGenerationExperimental = false;
 
   if (!headers.Authorization) {
+    stopImageContinuous();
     updateImageModeUI();
     return;
   }
@@ -311,6 +684,10 @@ async function refreshImageGenerationMethod() {
     }
   } catch (e) {}
 
+  if (!imageGenerationExperimental) {
+    stopImageContinuous();
+  }
+
   updateImageModeUI();
 }
 
@@ -320,14 +697,14 @@ async function refreshModels() {
 
   const headers = buildApiHeaders();
   if (!headers.Authorization) {
-    showToast('请先填写 API Key', 'warning');
+    showToast('璇峰厛濉啓 API Key', 'warning');
     return;
   }
 
   try {
     const res = await fetch('/v1/models', { headers });
     if (res.status === 401) {
-      showToast('API Key 无效或未授权', 'error');
+      showToast('API Key 鏃犳晥鎴栨湭鎺堟潈', 'error');
       return;
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -354,13 +731,14 @@ async function refreshModels() {
     else if (currentTab === 'video') sel.value = 'grok-imagine-1.0-video';
     else sel.value = sel.value || 'grok-4-fast';
   } catch (e) {
-    showToast('加载模型失败: ' + (e?.message || e), 'error');
+    showToast('鍔犺浇妯″瀷澶辫触: ' + (e?.message || e), 'error');
   }
 }
 
 function saveApiKey() {
   const k = getUserApiKey();
-  if (!k) return showToast('请输入 API Key', 'warning');
+  if (!k) return showToast('璇疯緭鍏?API Key', 'warning');
+  stopImageContinuous();
   localStorage.setItem(STORAGE_KEY, k);
   showToast('已保存', 'success');
   refreshModels();
@@ -368,6 +746,7 @@ function saveApiKey() {
 }
 
 function clearApiKey() {
+  stopImageContinuous();
   localStorage.removeItem(STORAGE_KEY);
   q('api-key-input').value = '';
   imageGenerationMethod = 'legacy';
@@ -377,6 +756,9 @@ function clearApiKey() {
 }
 
 function switchTab(tab) {
+  if (currentTab === 'image' && tab !== 'image') {
+    stopImageContinuous();
+  }
   currentTab = tab;
   ['chat', 'image', 'video'].forEach((t) => {
     q(`tab-${t}`).classList.toggle('active', t === tab);
@@ -413,18 +795,18 @@ async function uploadImages(files) {
 
 async function sendChat() {
   const prompt = String(q('chat-input').value || '').trim();
-  if (!prompt && !chatAttachments.length) return showToast('请输入内容或上传图片', 'warning');
+  if (!prompt && !chatAttachments.length) return showToast('璇疯緭鍏ュ唴瀹规垨涓婁紶鍥剧墖', 'warning');
 
   const model = String(q('model-select').value || '').trim();
   const stream = Boolean(q('stream-toggle').checked);
 
   const headers = { ...buildApiHeaders(), 'Content-Type': 'application/json' };
-  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
+  if (!headers.Authorization) return showToast('璇峰厛濉啓 API Key', 'warning');
 
   try {
     let imgUrls = [];
     if (chatAttachments.length) {
-      showToast('上传图片中...', 'info');
+      showToast('涓婁紶鍥剧墖涓?..', 'info');
       imgUrls = await uploadImages(chatAttachments.map((x) => x.file));
     }
 
@@ -434,7 +816,7 @@ async function sendChat() {
 
     chatMessages.push({ role: 'user', content: userContent });
 
-    showUserMsg('user', prompt || '[图片]');
+    showUserMsg('user', prompt || '[鍥剧墖]');
     q('chat-input').value = '';
     chatAttachments.forEach((a) => {
       try { URL.revokeObjectURL(a.previewUrl); } catch (e) {}
@@ -449,14 +831,14 @@ async function sendChat() {
       await streamChat(body, assistantBubble);
     } else {
       const res = await fetch('/v1/chat/completions', { method: 'POST', headers, body: JSON.stringify(body) });
-      if (res.status === 401) return showToast('API Key 无效或未授权', 'error');
+      if (res.status === 401) return showToast('API Key 鏃犳晥鎴栨湭鎺堟潈', 'error');
       const data = await res.json();
       const content = data?.choices?.[0]?.message?.content || '';
       chatMessages.push({ role: 'assistant', content });
       showUserMsg('assistant', content);
     }
   } catch (e) {
-    showToast('发送失败: ' + (e?.message || e), 'error');
+    showToast('鍙戦€佸け璐? ' + (e?.message || e), 'error');
   }
 }
 
@@ -507,7 +889,7 @@ function createImageCard(index) {
   card.className = 'result-card';
   card.dataset.index = String(index);
   card.innerHTML = `
-    <div class="result-placeholder">等待生成...</div>
+    <div class="result-placeholder">绛夊緟鐢熸垚...</div>
     <div class="result-progress"><div class="result-progress-bar"></div></div>
     <div class="result-meta"><span>#${index + 1}</span><span class="result-status">0%</span></div>
   `;
@@ -540,8 +922,8 @@ function updateImageCardCompleted(card, src, failed) {
 
   if (failed) {
     card.classList.add('is-error');
-    if (placeholder) placeholder.textContent = '生成失败';
-    if (status) status.textContent = '失败';
+    if (placeholder) placeholder.textContent = '鐢熸垚澶辫触';
+    if (status) status.textContent = '澶辫触';
     return;
   }
 
@@ -553,7 +935,7 @@ function updateImageCardCompleted(card, src, failed) {
   img.src = src;
   card.insertBefore(img, card.firstChild);
 
-  if (status) status.textContent = '完成';
+  if (status) status.textContent = '瀹屾垚';
 }
 
 function buildImageRequestConfig() {
@@ -642,14 +1024,21 @@ async function generateImage() {
   const prompt = String(q('image-prompt').value || '').trim();
   if (!prompt) return showToast('请输入 prompt', 'warning');
 
+  const headers = { ...buildApiHeaders(), 'Content-Type': 'application/json' };
+  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
+
+  if (imageGenerationExperimental && getImageRunMode() === 'continuous') {
+    startImageContinuous();
+    return;
+  }
+
+  stopImageContinuous();
+
   const model = String(q('model-select').value || 'grok-imagine-1.0').trim();
   const n = Math.max(1, Math.min(10, Math.floor(Number(q('image-n').value || 1) || 1)));
   const stream = Boolean(q('stream-toggle').checked);
   const useStream = stream && n <= 2;
   const { size, concurrency } = buildImageRequestConfig();
-
-  const headers = { ...buildApiHeaders(), 'Content-Type': 'application/json' };
-  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
 
   q('image-results').innerHTML = '';
   showToast('生成中...', 'info');
@@ -657,12 +1046,12 @@ async function generateImage() {
   const reqBody = { prompt, model, n, size, concurrency };
   try {
     if (stream && !useStream) {
-      showToast('n > 2 automatically disables Stream and falls back to non-stream mode.', 'warning');
+      showToast('n > 2 disables stream and falls back to non-stream mode.', 'warning');
     }
 
     if (useStream) {
       const rendered = await streamImage(reqBody, headers);
-      if (!rendered) throw new Error('没有生成结果');
+      if (!rendered) throw new Error('No image generated');
       return;
     }
 
@@ -675,7 +1064,7 @@ async function generateImage() {
     if (!res.ok) throw new Error(data?.error?.message || data?.detail || `HTTP ${res.status}`);
 
     const items = Array.isArray(data?.data) ? data.data : [];
-    if (!items.length) throw new Error('没有生成结果');
+    if (!items.length) throw new Error('No image generated');
 
     let rendered = 0;
     items.forEach((it, idx) => {
@@ -690,7 +1079,7 @@ async function generateImage() {
       updateImageCardCompleted(card, src, false);
     });
 
-    if (!rendered) throw new Error('图片返回为空或格式不支持');
+    if (!rendered) throw new Error('Image data is empty or unsupported');
   } catch (e) {
     showToast('生图失败: ' + (e?.message || e), 'error');
   }
@@ -698,12 +1087,12 @@ async function generateImage() {
 
 async function generateVideo() {
   const prompt = String(q('video-prompt').value || '').trim();
-  if (!prompt) return showToast('请输入 prompt', 'warning');
+  if (!prompt) return showToast('璇疯緭鍏?prompt', 'warning');
 
   const model = String(q('model-select').value || 'grok-imagine-1.0-video').trim();
   const stream = Boolean(q('stream-toggle').checked);
   const headers = { ...buildApiHeaders(), 'Content-Type': 'application/json' };
-  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
+  if (!headers.Authorization) return showToast('璇峰厛濉啓 API Key', 'warning');
 
   const videoConfig = {
     aspect_ratio: String(q('video-aspect').value || '3:2'),
@@ -715,7 +1104,7 @@ async function generateVideo() {
   try {
     let imgUrls = [];
     if (videoAttachments.length) {
-      showToast('上传图片中...', 'info');
+      showToast('涓婁紶鍥剧墖涓?..', 'info');
       imgUrls = await uploadImages(videoAttachments.slice(0, 1).map((x) => x.file));
     }
 
@@ -746,7 +1135,7 @@ async function generateVideo() {
     videoAttachments = [];
     renderAttachments('video');
   } catch (e) {
-    showToast('生成视频失败: ' + (e?.message || e), 'error');
+    showToast('鐢熸垚瑙嗛澶辫触: ' + (e?.message || e), 'error');
   }
 }
 
@@ -789,3 +1178,4 @@ if (document.readyState === 'loading') {
 } else {
   init();
 }
+

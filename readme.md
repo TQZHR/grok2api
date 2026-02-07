@@ -251,7 +251,7 @@ curl http://localhost:8000/v1/images/generations \
 | `response_format` | string | 图片返回格式 | `url`, `base64`, `b64_json`（默认跟随 `app.image_format`） |
 
 注：
-- 当 `grok.image_generation_method=imagine_ws_experimental` 时，支持实时 SSE 生图瀑布流；无法持续流式时仍保持 SSE 并在结束后返回完成事件。
+- `grok.image_generation_method=imagine_ws_experimental` 支持 `single`（单次）与 `continuous`（持续）两种模式。
 - `size` 在新方式下会映射为比例：`1024x576/1280x720/1536x864 -> 16:9`，`576x1024/720x1280/864x1536 -> 9:16`，`1024x1024/512x512 -> 1:1`，`1024x1536/512x768/768x1024 -> 2:3`，`1536x1024/768x512/1024x768 -> 3:2`；其他值默认 `2:3`。
 - 除上述外的其他参数将自动丢弃并忽略。
 
@@ -279,6 +279,15 @@ curl http://localhost:8000/v1/images/method \
 - Cloudflare / Docker / 本地 三种部署均保持同一接口语义
 
 <br>
+
+#### `imagine_ws_experimental` (`/chat` + `/admin/chat`)
+
+- In experimental mode, the image panel is replaced and supports two run modes: `single` and `continuous`.
+- `single` keeps using `POST /v1/images/generations` and remains response-compatible.
+- `continuous` uses WebSocket: `/api/v1/admin/imagine/ws?api_key=<API_KEY>`.
+- WS commands: `start` / `stop` / `ping`.
+- WS events: `status` / `image` / `error` / `pong`.
+- Continuous payload includes `b64_json`, `sequence`, `elapsed_ms`, `aspect_ratio`, `run_id`.
 
 ### `POST /v1/images/edits`
 

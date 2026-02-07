@@ -216,6 +216,81 @@
   background: #fef2f2;
 }
 
+.imagine-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.imagine-metrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.imagine-metric {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.imagine-metric span {
+  font-size: 11px;
+  color: var(--accents-5);
+}
+
+.imagine-metric b {
+  font-size: 12px;
+  color: var(--accents-8);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.image-waterfall {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.image-waterfall .waterfall-item {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+  animation: riseIn 0.25s ease;
+}
+
+.image-waterfall .waterfall-item img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.image-waterfall .waterfall-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--accents-5);
+}
+
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (max-width: 1024px) {
   .chat-messages {
     height: 360px;
@@ -227,6 +302,14 @@
 
   .results-grid.waterfall-layout {
     column-count: 3;
+  }
+
+  .imagine-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .image-waterfall {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
@@ -294,10 +377,26 @@
   .results-grid.waterfall-layout {
     column-count: 2;
   }
+
+  .imagine-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .image-waterfall {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 480px) {
   .results-grid.waterfall-layout {
     column-count: 1;
+  }
+
+  .imagine-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .image-waterfall {
+    grid-template-columns: 1fr;
   }
 }
