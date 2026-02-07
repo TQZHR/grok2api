@@ -34,7 +34,7 @@ export async function addRequestLog(
   const time = formatUtcMs(ts);
   await dbRun(
     db,
-    "INSERT INTO request_logs(id,time,timestamp,ip,model,duration,status,key_name,token_suffix,total_tokens,input_tokens,output_tokens,reasoning_tokens,cached_tokens,error) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    "INSERT INTO request_logs(id,time,timestamp,ip,model,duration,status,key_name,token_suffix,total_tokens,input_tokens,output_tokens,reasoning_tokens,cached_tokens,error) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     [
       id,
       time,
