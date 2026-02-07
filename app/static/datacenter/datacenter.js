@@ -108,6 +108,11 @@ function updateMetricsUI(data) {
   setText('m-req-success', safeNum(sum.success).toLocaleString());
   setText('m-req-failed', safeNum(sum.failed).toLocaleString());
   setText('m-success-rate', formatPercent(safeNum(sum.success_rate)));
+  setText('m-total-tokens', safeNum(sum.total_tokens).toLocaleString());
+  setText('m-input-tokens', safeNum(sum.input_tokens).toLocaleString());
+  setText('m-output-tokens', safeNum(sum.output_tokens).toLocaleString());
+  setText('m-reasoning-tokens', safeNum(sum.reasoning_tokens).toLocaleString());
+  setText('m-cached-tokens', safeNum(sum.cached_tokens).toLocaleString());
 
   const cache = data.cache || {};
   const li = cache.local_image || { count: 0, size_mb: 0 };
