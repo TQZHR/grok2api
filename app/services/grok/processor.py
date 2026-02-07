@@ -11,6 +11,7 @@ from typing import Any, AsyncGenerator, Optional, AsyncIterable, List
 from app.core.config import get_config
 from app.core.logger import logger
 from app.services.grok.assets import DownloadService
+from app.services.token_usage import build_chat_usage
 
 
 ASSET_URL = "https://assets.grok.com/"
@@ -116,6 +117,8 @@ class StreamProcessor(BaseProcessor):
         self.fingerprint: str = ""
         self.think_opened: bool = False
         self.role_sent: bool = False
+        self._output_text: str = ""
+        self._reasoning_text: str = ""
         self.filter_tags = get_config("grok.filter_tags", [])
         self.image_format = get_config("app.image_format", "url")
         
@@ -157,6 +160,7 @@ class StreamProcessor(BaseProcessor):
                         idx = img.get('imageIndex', 0) + 1
                         progress = img.get('progress', 0)
                         yield self._sse(f"正在生成第{idx}张图片中，当前进度{progress}%\n")
+                        self._reasoning_text += f"正在生成第{idx}张图片中，当前进度{progress}%\n"
                     continue
                 
                 # modelResponse
@@ -164,6 +168,7 @@ class StreamProcessor(BaseProcessor):
                     if self.think_opened and self.show_think:
                         if msg := mr.get("message"):
                             yield self._sse(msg + "\n")
+                            self._reasoning_text += msg + "\n"
                         yield self._sse("</think>\n")
                         self.think_opened = False
                     
@@ -171,18 +176,21 @@ class StreamProcessor(BaseProcessor):
                     for url in mr.get("generatedImageUrls", []):
                         parts = url.split("/")
                         img_id = parts[-2] if len(parts) >= 2 else "image"
-                        
+
                         if self.image_format == "base64":
                             dl_service = self._get_dl()
                             base64_data = await dl_service.to_base64(url, self.token, "image")
                             if base64_data:
                                 yield self._sse(f"![{img_id}]({base64_data})\n")
+                                self._output_text += f"![{img_id}]({base64_data})\n"
                             else:
                                 final_url = await self.process_url(url, "image")
                                 yield self._sse(f"![{img_id}]({final_url})\n")
+                                self._output_text += f"![{img_id}]({final_url})\n"
                         else:
                             final_url = await self.process_url(url, "image")
                             yield self._sse(f"![{img_id}]({final_url})\n")
+                            self._output_text += f"![{img_id}]({final_url})\n"
                     
                     if (meta := mr.get("metadata", {})).get("llm_info", {}).get("modelHash"):
                         self.fingerprint = meta["llm_info"]["modelHash"]
@@ -192,9 +200,14 @@ class StreamProcessor(BaseProcessor):
                 if (token := resp.get("token")) is not None:
                     if token and not (self.filter_tags and any(t in token for t in self.filter_tags)):
                         yield self._sse(token)
+                        if self.think_opened and self.show_think:
+                            self._reasoning_text += token
+                        else:
+                            self._output_text += token
                         
             if self.think_opened:
                 yield self._sse("</think>\n")
+                self.think_opened = False
             yield self._sse(finish="stop")
             yield "data: [DONE]\n\n"
         except Exception as e:
@@ -202,6 +215,10 @@ class StreamProcessor(BaseProcessor):
             raise
         finally:
             await self.close()
+
+    def build_usage(self, prompt_messages: Optional[list[dict]] = None) -> dict[str, Any]:
+        usage = build_chat_usage(prompt_messages or [], (self._output_text + self._reasoning_text))
+        return usage
 
 
 class CollectProcessor(BaseProcessor):
@@ -211,7 +228,7 @@ class CollectProcessor(BaseProcessor):
         super().__init__(model, token)
         self.image_format = get_config("app.image_format", "url")
     
-    async def process(self, response: AsyncIterable[bytes]) -> dict[str, Any]:
+    async def process(self, response: AsyncIterable[bytes], prompt_messages: Optional[list[dict]] = None) -> dict[str, Any]:
         """处理并收集完整响应"""
         response_id = ""
         fingerprint = ""
@@ -261,6 +278,7 @@ class CollectProcessor(BaseProcessor):
         finally:
             await self.close()
         
+        usage = build_chat_usage(prompt_messages or [], content)
         return {
             "id": response_id,
             "object": "chat.completion",
@@ -272,11 +290,7 @@ class CollectProcessor(BaseProcessor):
                 "message": {"role": "assistant", "content": content, "refusal": None, "annotations": []},
                 "finish_reason": "stop"
             }],
-            "usage": {
-                "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
-                "prompt_tokens_details": {"cached_tokens": 0, "text_tokens": 0, "audio_tokens": 0, "image_tokens": 0},
-                "completion_tokens_details": {"text_tokens": 0, "audio_tokens": 0, "reasoning_tokens": 0}
-            }
+            "usage": usage
         }
 
 
