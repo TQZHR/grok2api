@@ -56,6 +56,23 @@
   font-weight: 500;
 }
 
+@media (max-width: 768px) {
+  .toast-container {
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    transform: none;
+    align-items: stretch;
+  }
+
+  .toast {
+    min-width: 0;
+    max-width: none;
+    width: 100%;
+    padding: 10px 12px;
+  }
+}
+
 @keyframes toastIn {
   from {
     opacity: 0;

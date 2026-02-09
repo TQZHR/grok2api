@@ -43,3 +43,31 @@
   white-space: pre;
 }
 
+@media (max-width: 768px) {
+  .datacenter-controls {
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+
+  .chart-wrap {
+    height: 200px;
+  }
+
+  .log-toolbar {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .log-toolbar .geist-input,
+  .log-toolbar #log-refresh {
+    width: 100%;
+  }
+
+  .log-content {
+    max-height: 320px;
+  }
+}
+

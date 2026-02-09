@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 
 <head>
@@ -9,8 +9,8 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-sans/style.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-mono/style.css" rel="stylesheet">
-  <link href="/static/common/common.css" rel="stylesheet">
-  <link href="/static/cache/cache.css?v=3" rel="stylesheet">
+  <link href="/static/common/common.css?v=3" rel="stylesheet">
+  <link href="/static/cache/cache.css?v=4" rel="stylesheet">
   <link href="/static/common/toast.css" rel="stylesheet">
 </head>
 
@@ -19,7 +19,7 @@
 
   <main class="space-y-6 flex-1 container mx-auto max-w-4xl px-6 py-8 fade-in">
     <div class="space-y-6">
-      <div class="flex justify-between items-center">
+      <div class="flex flex-wrap justify-between items-start gap-3">
         <div>
           <h2 class="text-2xl font-semibold tracking-tight">缓存管理</h2>
           <p class="text-[var(--accents-4)] mt-1 text-sm">管理本地资源与在线资产缓存。</p>
@@ -151,13 +151,13 @@
 
   <div id="batch-actions"
     class="fixed bottom-8 left-1/2 -translate-x-1/2 z-20 bg-white border border-[var(--border)] rounded-full px-3 py-2 flex items-center shadow-lg gap-3 cursor-move select-none active:cursor-grabbing whitespace-nowrap">
-    <div class="text-sm font-medium flex items-center gap-2">
+    <div class="batch-actions-meta text-sm font-medium flex items-center gap-2">
       <span class="text-[var(--accents-5)] text-xs">已选择</span>
       <span class="bg-black text-white text-xs px-1.5 py-0.5 rounded-full" id="selected-count">0</span>
       <span class="text-[var(--accents-5)] text-xs">项</span>
     </div>
     <span class="toolbar-sep"></span>
-    <div class="flex items-center gap-1">
+    <div class="batch-actions-buttons flex items-center gap-1">
       <button id="btn-load-stats" onclick="handleLoadClick()"
         class="geist-button-outline text-xs px-3 gap-1 border-0 hover:bg-gray-100">
         加载
@@ -197,7 +197,7 @@
   </dialog>
 
   <script src="/static/common/admin-auth.js?v=3"></script>
-  <script src="/static/common/header.js?v=1"></script>
+  <script src="/static/common/header.js?v=3"></script>
   <script src="/static/common/footer.js?v=1"></script>
   <script src="/static/common/toast.js"></script>
   <script src="/static/cache/cache.js?v=5"></script>
@@ -205,3 +205,6 @@
 </body>
 
 </html>
+
+
+

@@ -5,7 +5,7 @@ import { nowMs } from "./utils/time";
 export interface GlobalSettings {
   base_url?: string;
   log_level?: string;
-  image_mode?: "url" | "base64";
+  image_mode?: "url" | "base64" | "b64_json";
   admin_username?: string;
   admin_password?: string;
   image_cache_max_size_mb?: number;
@@ -29,6 +29,7 @@ export interface GrokSettings {
   stream_chunk_timeout?: number;
   stream_total_timeout?: number;
   retry_status_codes?: number[];
+  image_generation_method?: string;
 }
 
 export interface TokenSettings {
@@ -105,6 +106,7 @@ const DEFAULTS: SettingsBundle = {
     stream_chunk_timeout: 120,
     stream_total_timeout: 600,
     retry_status_codes: [401, 429, 403],
+    image_generation_method: "legacy",
   },
   token: {
     auto_refresh: true,
@@ -142,6 +144,15 @@ const DEFAULTS: SettingsBundle = {
   },
 };
 
+const IMAGE_METHOD_LEGACY = "legacy";
+const IMAGE_METHOD_IMAGINE_WS_EXPERIMENTAL = "imagine_ws_experimental";
+const IMAGE_METHOD_ALIASES: Record<string, string> = {
+  imagine_ws: IMAGE_METHOD_IMAGINE_WS_EXPERIMENTAL,
+  experimental: IMAGE_METHOD_IMAGINE_WS_EXPERIMENTAL,
+  new: IMAGE_METHOD_IMAGINE_WS_EXPERIMENTAL,
+  new_method: IMAGE_METHOD_IMAGINE_WS_EXPERIMENTAL,
+};
+
 function safeParseJson<T>(raw: string, fallback: T): T {
   try {
     return JSON.parse(raw) as T;
@@ -159,6 +170,19 @@ function stripCfPrefix(value: string): string {
 export function normalizeCfCookie(value: string): string {
   const cleaned = stripCfPrefix(value);
   return cleaned ? `cf_clearance=${cleaned}` : "";
+}
+
+export function normalizeImageGenerationMethod(value: unknown): string {
+  const candidate = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (candidate === IMAGE_METHOD_IMAGINE_WS_EXPERIMENTAL) {
+    return IMAGE_METHOD_IMAGINE_WS_EXPERIMENTAL;
+  }
+  if (IMAGE_METHOD_ALIASES[candidate]) {
+    return IMAGE_METHOD_ALIASES[candidate];
+  }
+  return IMAGE_METHOD_LEGACY;
 }
 
 export async function getSettings(env: Env): Promise<SettingsBundle> {
@@ -212,9 +236,18 @@ export async function getSettings(env: Env): Promise<SettingsBundle> {
     ? safeParseJson<RegisterSettings>(registerRow.value, DEFAULTS.register)
     : DEFAULTS.register;
 
+  const mergedGrok = {
+    ...DEFAULTS.grok,
+    ...grokCfg,
+    cf_clearance: stripCfPrefix(grokCfg.cf_clearance ?? ""),
+  };
+  mergedGrok.image_generation_method = normalizeImageGenerationMethod(
+    mergedGrok.image_generation_method,
+  );
+
   return {
     global: { ...DEFAULTS.global, ...globalCfg },
-    grok: { ...DEFAULTS.grok, ...grokCfg, cf_clearance: stripCfPrefix(grokCfg.cf_clearance ?? "") },
+    grok: mergedGrok,
     token: { ...DEFAULTS.token, ...tokenCfg },
     cache: { ...DEFAULTS.cache, ...cacheCfg },
     performance: { ...DEFAULTS.performance, ...performanceCfg },
@@ -242,6 +275,7 @@ export async function saveSettings(
     ...(updates.grok_config ?? {}),
     cf_clearance: stripCfPrefix(updates.grok_config?.cf_clearance ?? current.grok.cf_clearance ?? ""),
   };
+  nextGrok.image_generation_method = normalizeImageGenerationMethod(nextGrok.image_generation_method);
   const nextToken: TokenSettings = { ...current.token, ...(updates.token_config ?? {}) };
   const nextCache: CacheSettings = { ...current.cache, ...(updates.cache_config ?? {}) };
   const nextPerformance: PerformanceSettings = { ...current.performance, ...(updates.performance_config ?? {}) };

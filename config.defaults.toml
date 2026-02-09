@@ -11,6 +11,7 @@ asset_proxy_url = ""
 cf_clearance = ""
 max_retry = 3
 retry_status_codes = [401,429,403]
+image_generation_method = "legacy"
 
 [app]
 app_url = "http://127.0.0.1:8000"
@@ -26,6 +27,8 @@ refresh_interval_hours = 8
 fail_threshold = 5
 save_delay_ms = 500
 reload_interval_sec = 30
+nsfw_refresh_concurrency = 10
+nsfw_refresh_retries = 3
 
 [cache]
 enable_auto_clean = true

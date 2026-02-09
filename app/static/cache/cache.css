@@ -302,3 +302,61 @@
   box-shadow: 0 0 0 2px #000;
   border-color: #000;
 }
+
+@media (max-width: 768px) {
+  .cache-card {
+    padding: 12px 12px;
+  }
+
+  .cache-card .flex.items-start.justify-between {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .cache-stat-value {
+    font-size: 18px;
+  }
+
+  #batch-actions {
+    left: 12px;
+    right: 12px;
+    bottom: 10px;
+    transform: none;
+    border-radius: 12px;
+    padding: 10px;
+    gap: 10px;
+    flex-wrap: wrap;
+    cursor: default;
+  }
+
+  #batch-actions .toolbar-sep {
+    display: none;
+  }
+
+  #batch-actions .batch-actions-meta,
+  #batch-actions #batch-progress {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  #batch-actions .batch-actions-buttons {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  #batch-actions .batch-actions-buttons button {
+    width: 100%;
+  }
+
+  #batch-actions #batch-progress {
+    order: 3;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  #batch-actions #batch-progress .toolbar-sep {
+    display: none;
+  }
+}

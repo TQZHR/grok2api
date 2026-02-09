@@ -68,13 +68,19 @@ class BaseProcessor:
             
         if not path.startswith("/"):
             path = f"/{path}"
-            
+
+        # Invalid root path is not a displayable image URL.
+        if path in {"", "/"}:
+            return ""
+
+        # Always materialize to local cache endpoint so callers don't rely on
+        # direct assets.grok.com access (often blocked without upstream cookies).
+        dl_service = self._get_dl()
+        await dl_service.download(path, self.token, media_type)
+        local_path = f"/v1/files/{media_type}{path}"
         if self.app_url:
-            dl_service = self._get_dl()
-            await dl_service.download(path, self.token, media_type)
-            return f"{self.app_url.rstrip('/')}/v1/files/{media_type}{path}"
-        else:
-            return f"{ASSET_URL.rstrip('/')}{path}"
+            return f"{self.app_url.rstrip('/')}{local_path}"
+        return local_path
             
     def _sse(self, content: str = "", role: str = None, finish: str = None) -> str:
         """构建 SSE 响应 (StreamProcessor 通用)"""
@@ -427,11 +433,24 @@ class VideoCollectProcessor(BaseProcessor):
 class ImageStreamProcessor(BaseProcessor):
     """图片生成流式响应处理器"""
     
-    def __init__(self, model: str, token: str = "", n: int = 1):
+    def __init__(
+        self,
+        model: str,
+        token: str = "",
+        n: int = 1,
+        response_format: str = "b64_json",
+    ):
         super().__init__(model, token)
         self.partial_index = 0
         self.n = n
         self.target_index = random.randint(0, 1) if n == 1 else None
+        self.response_format = (response_format or "b64_json").lower()
+        if self.response_format == "url":
+            self.response_field = "url"
+        elif self.response_format == "base64":
+            self.response_field = "base64"
+        else:
+            self.response_field = "b64_json"
     
     def _sse(self, event: str, data: dict) -> str:
         """构建 SSE 响应 (覆盖基类)"""
@@ -464,7 +483,7 @@ class ImageStreamProcessor(BaseProcessor):
                     
                     yield self._sse("image_generation.partial_image", {
                         "type": "image_generation.partial_image",
-                        "b64_json": "",
+                        self.response_field: "",
                         "index": out_index,
                         "progress": progress
                     })
@@ -474,6 +493,11 @@ class ImageStreamProcessor(BaseProcessor):
                 if mr := resp.get("modelResponse"):
                     if urls := mr.get("generatedImageUrls"):
                         for url in urls:
+                            if self.response_format == "url":
+                                processed = await self.process_url(url, "image")
+                                if processed:
+                                    final_images.append(processed)
+                                continue
                             dl_service = self._get_dl()
                             base64_data = await dl_service.to_base64(url, self.token, "image")
                             if base64_data:
@@ -494,7 +518,7 @@ class ImageStreamProcessor(BaseProcessor):
                 
                 yield self._sse("image_generation.completed", {
                     "type": "image_generation.completed",
-                    "b64_json": b64,
+                    self.response_field: b64,
                     "index": out_index,
                     "usage": {
                         "total_tokens": 50,
@@ -513,8 +537,14 @@ class ImageStreamProcessor(BaseProcessor):
 class ImageCollectProcessor(BaseProcessor):
     """图片生成非流式响应处理器"""
     
-    def __init__(self, model: str, token: str = ""):
+    def __init__(
+        self,
+        model: str,
+        token: str = "",
+        response_format: str = "b64_json",
+    ):
         super().__init__(model, token)
+        self.response_format = (response_format or "b64_json").lower()
     
     async def process(self, response: AsyncIterable[bytes]) -> List[str]:
         """处理并收集图片"""
@@ -534,6 +564,11 @@ class ImageCollectProcessor(BaseProcessor):
                 if mr := resp.get("modelResponse"):
                     if urls := mr.get("generatedImageUrls"):
                         for url in urls:
+                            if self.response_format == "url":
+                                processed = await self.process_url(url, "image")
+                                if processed:
+                                    images.append(processed)
+                                continue
                             dl_service = self._get_dl()
                             base64_data = await dl_service.to_base64(url, self.token, "image")
                             if base64_data:

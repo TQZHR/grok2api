@@ -56,7 +56,7 @@ async def lifespan(app: FastAPI):
 
     await config.load()
 
-    # 1.1 Old account post-migration settings (TOS + NSFW), best-effort
+    # 1.1 Old account post-migration settings (TOS + BirthDate + NSFW), best-effort
     async def _run_legacy_account_migration():
         try:
             await migrate_legacy_account_settings(concurrency=10)

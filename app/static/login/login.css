@@ -97,3 +97,25 @@
   font-size: 12px;
   justify-content: center;
 }
+
+@media (max-width: 768px) {
+  .login-shell {
+    width: min(420px, 94vw);
+    padding: 16px;
+  }
+
+  .login-card {
+    padding: 18px;
+  }
+
+  .login-form {
+    margin-top: 14px;
+    gap: 9px;
+  }
+
+  .login-input,
+  .login-button {
+    height: 36px;
+    font-size: 13px;
+  }
+}

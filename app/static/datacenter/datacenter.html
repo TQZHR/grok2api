@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 
 <head>
@@ -10,9 +10,9 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-sans/style.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-mono/style.css" rel="stylesheet">
-  <link href="/static/common/common.css" rel="stylesheet">
+  <link href="/static/common/common.css?v=3" rel="stylesheet">
   <link href="/static/common/toast.css" rel="stylesheet">
-  <link href="/static/datacenter/datacenter.css?v=1" rel="stylesheet">
+  <link href="/static/datacenter/datacenter.css?v=2" rel="stylesheet">
 </head>
 
 <body class="min-h-screen flex flex-col" style="background-color: var(--bg);">
@@ -20,12 +20,12 @@
 
   <main class="space-y-6 flex-1 container mx-auto max-w-4xl px-6 py-8 fade-in">
     <div class="space-y-6">
-      <div class="flex justify-between items-center">
+      <div class="flex flex-wrap justify-between items-start gap-3">
         <div>
           <h2 class="text-2xl font-semibold tracking-tight">数据中心</h2>
           <p class="text-[var(--accents-4)] mt-1 text-sm">常用指标与后台日志。</p>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="datacenter-controls flex items-center gap-2">
           <button id="btn-refresh" class="geist-button-outline text-xs px-3">刷新</button>
           <label class="dc-toggle text-xs text-[var(--accents-4)]">
             <input id="auto-refresh" type="checkbox" class="checkbox" checked>
@@ -119,7 +119,7 @@
             <h3 class="text-lg font-semibold tracking-tight">后台日志</h3>
             <p class="text-[var(--accents-4)] text-sm mt-1">显示 logs/*.log（格式化展示，完整行）。</p>
           </div>
-          <div class="flex items-center gap-2 flex-wrap">
+          <div class="log-toolbar flex items-center gap-2 flex-wrap">
             <select id="log-file" class="geist-input text-xs w-56"></select>
             <input id="log-lines" type="number" min="50" max="5000" value="500" class="geist-input text-xs w-24" title="尾部行数">
             <input id="log-filter" type="text" placeholder="过滤关键词…" class="geist-input text-xs w-40">
@@ -138,10 +138,13 @@
   <div id="toast-container" class="toast-container"></div>
 
   <script src="/static/common/admin-auth.js?v=3"></script>
-  <script src="/static/common/header.js?v=1"></script>
+  <script src="/static/common/header.js?v=3"></script>
   <script src="/static/common/footer.js?v=1"></script>
   <script src="/static/common/toast.js"></script>
   <script src="/static/datacenter/datacenter.js?v=2"></script>
 </body>
 
 </html>
+
+
+

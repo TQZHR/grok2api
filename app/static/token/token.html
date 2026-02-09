@@ -9,8 +9,8 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-sans/style.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-mono/style.css" rel="stylesheet">
-  <link href="/static/common/common.css" rel="stylesheet">
-  <link href="/static/token/token.css?v=11" rel="stylesheet">
+  <link href="/static/common/common.css?v=3" rel="stylesheet">
+  <link href="/static/token/token.css?v=12" rel="stylesheet">
   <link href="/static/common/toast.css" rel="stylesheet">
 </head>
 
@@ -24,12 +24,12 @@
   <main class="space-y-6 flex-1 container mx-auto max-w-4xl px-6 py-8 fade-in">
 
     <div class="space-y-6">
-      <div class="flex justify-between items-center">
+      <div class="flex flex-wrap justify-between items-start gap-3">
         <div>
           <h2 class="text-2xl font-semibold tracking-tight">Token 列表</h2>
           <p class="text-[var(--accents-4)] mt-1 text-sm">管理 Grok2API 的 Token 服务号池。</p>
         </div>
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-3 w-full sm:w-auto">
           <button onclick="openImportModal()" class="geist-button-outline gap-2">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round">
@@ -38,6 +38,14 @@
               <line x1="12" y1="3" x2="12" y2="15"></line>
             </svg>
             导入
+          </button>
+          <button id="btn-refresh-nsfw-all" onclick="refreshAllNsfw()" class="geist-button-outline gap-2 hidden">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 23 10 17 10"></polyline>
+              <polyline points="1 20 1 14 7 14"></polyline>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </svg>
+            一键刷新 NSFW
           </button>
           <button onclick="addToken()" class="geist-button gap-2">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -51,7 +59,7 @@
       <div class="h-px bg-[var(--border)] my-6"></div>
 
       <!-- Statistics -->
-      <div class="grid grid-cols-4 gap-4 mb-6" id="stats-container">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6" id="stats-container">
         <!-- Row 1 -->
         <div class="stat-card">
           <div class="stat-value" id="stat-total">-</div>
@@ -89,6 +97,40 @@
         </div>
       </div>
 
+      <div id="token-filter-bar"
+        class="token-filter-bar mb-4 bg-white border border-[var(--border)] rounded-lg px-4 py-3 flex flex-wrap items-center gap-4">
+        <div class="filter-group flex items-center gap-3">
+          <span class="text-xs text-[var(--accents-5)]">类型</span>
+          <label class="filter-chip">
+            <input type="checkbox" id="filter-type-sso" onchange="onFilterChange()">
+            <span>sso</span>
+          </label>
+          <label class="filter-chip">
+            <input type="checkbox" id="filter-type-supersso" onchange="onFilterChange()">
+            <span>supersso</span>
+          </label>
+        </div>
+        <div class="filter-group flex items-center gap-3">
+          <span class="text-xs text-[var(--accents-5)]">状态</span>
+          <label class="filter-chip">
+            <input type="checkbox" id="filter-status-active" onchange="onFilterChange()">
+            <span>活跃</span>
+          </label>
+          <label class="filter-chip">
+            <input type="checkbox" id="filter-status-invalid" onchange="onFilterChange()">
+            <span>失效</span>
+          </label>
+          <label class="filter-chip">
+            <input type="checkbox" id="filter-status-exhausted" onchange="onFilterChange()">
+            <span>额度用尽</span>
+          </label>
+        </div>
+        <div class="filter-summary ml-auto flex items-center gap-3">
+          <span class="text-xs text-[var(--accents-5)]">结果 <span id="filter-result-count">0</span></span>
+          <button onclick="resetFilters()" class="geist-button-outline text-xs px-3 h-7">清空筛选</button>
+        </div>
+      </div>
+
       <!-- Token Table -->
       <div class="rounded-lg overflow-hidden bg-white mb-4 overflow-x-auto">
         <table class="geist-table min-w-[800px]">
@@ -122,13 +164,13 @@
   <!-- Batch Actions Bar (Floating Bottom) -->
   <div id="batch-actions"
     class="fixed bottom-8 left-1/2 -translate-x-1/2 z-20 bg-white border border-[var(--border)] rounded-full px-3 py-2 flex items-center shadow-lg gap-3 cursor-move select-none active:cursor-grabbing whitespace-nowrap">
-    <div class="text-sm font-medium flex items-center gap-2">
+    <div class="batch-actions-meta text-sm font-medium flex items-center gap-2">
       <span class="text-[var(--accents-5)] text-xs">已选择</span>
       <span class="bg-black text-white text-xs px-1.5 py-0.5 rounded-full" id="selected-count">0</span>
       <span class="text-[var(--accents-5)] text-xs">项</span>
     </div>
     <span class="toolbar-sep"></span>
-    <div class="flex items-center gap-1">
+    <div class="batch-actions-buttons flex items-center gap-1">
       <button id="btn-batch-export" onclick="batchExport()"
         class="geist-button-outline text-xs px-3 gap-1 border-0 hover:bg-gray-100">
         导出
@@ -174,7 +216,7 @@
             <label class="modal-label mb-1 block">Token</label>
             <input type="text" id="add-token-input" class="geist-input font-mono" placeholder="sso=..." />
           </div>
-          <div class="grid grid-cols-2 gap-3">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <label class="modal-label mb-1 block">类型</label>
               <select id="add-token-pool" class="geist-input">
@@ -200,7 +242,7 @@
 
       <div id="add-tab-auto" class="tab-panel hidden">
         <div class="space-y-4">
-          <div class="grid grid-cols-2 gap-3">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <label class="modal-label mb-1 block">注册数量</label>
               <input type="number" id="auto-register-count" class="geist-input" min="1" placeholder="默认 100" />
@@ -317,10 +359,13 @@
 
   <script src="/static/common/draggable.js"></script>
   <script src="/static/common/admin-auth.js?v=3"></script>
-  <script src="/static/common/header.js?v=1"></script>
+  <script src="/static/common/header.js?v=3"></script>
   <script src="/static/common/footer.js?v=1"></script>
   <script src="/static/common/toast.js"></script>
-  <script src="/static/token/token.js?v=14"></script>
+  <script src="/static/token/token.js?v=15"></script>
 </body>
 
 </html>
+
+
+

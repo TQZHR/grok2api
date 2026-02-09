@@ -13,6 +13,168 @@ let autoRegisterTimer = null;
 let autoRegisterLastAdded = 0;
 let liveStatsTimer = null;
 let isWorkersRuntime = false;
+let isNsfwRefreshAllRunning = false;
+
+let displayTokens = [];
+const filterState = {
+  typeSso: false,
+  typeSuperSso: false,
+  statusActive: false,
+  statusInvalid: false,
+  statusExhausted: false,
+};
+
+function normalizeSsoToken(token) {
+  const v = String(token || '').trim();
+  return v.startsWith('sso=') ? v.slice(4).trim() : v;
+}
+
+function poolToType(pool) {
+  return String(pool || '').trim() === 'ssoSuper' ? 'ssoSuper' : 'sso';
+}
+
+function normalizeStatus(rawStatus) {
+  const status = String(rawStatus || 'active').trim().toLowerCase();
+  if (status === 'expired') return 'invalid';
+  if (status === 'active' || status === 'cooling' || status === 'invalid' || status === 'disabled') return status;
+  return 'active';
+}
+
+function parseQuotaValue(v) {
+  if (v === null || v === undefined || v === '') return { value: -1, known: false };
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return { value: -1, known: false };
+  return { value: Math.floor(n), known: true };
+}
+
+function extractApiErrorMessage(payload, fallback = '请求失败') {
+  if (!payload) return fallback;
+  if (typeof payload === 'string' && payload.trim()) return payload.trim();
+  if (typeof payload.detail === 'string' && payload.detail.trim()) return payload.detail.trim();
+  if (typeof payload.error === 'string' && payload.error.trim()) return payload.error.trim();
+  if (typeof payload.message === 'string' && payload.message.trim()) return payload.message.trim();
+  if (payload.error && typeof payload.error.message === 'string' && payload.error.message.trim()) {
+    return payload.error.message.trim();
+  }
+  return fallback;
+}
+
+async function parseJsonSafely(response) {
+  try {
+    return await response.json();
+  } catch (e) {
+    return null;
+  }
+}
+
+function normalizeTokenRecord(pool, raw) {
+  const tokenType = poolToType(pool);
+  const isString = typeof raw === 'string';
+  const source = isString ? { token: raw } : (raw || {});
+  const token = normalizeSsoToken(source.token);
+  if (!token) return null;
+
+  const status = normalizeStatus(source.status);
+  const quotaParsed = parseQuotaValue(source.quota);
+  const heavyParsed = parseQuotaValue(source.heavy_quota);
+
+  return {
+    token,
+    status,
+    quota: quotaParsed.known ? quotaParsed.value : 0,
+    quota_known: quotaParsed.known,
+    heavy_quota: heavyParsed.known ? heavyParsed.value : -1,
+    heavy_quota_known: heavyParsed.known,
+    token_type: source.token_type || tokenType,
+    note: source.note || '',
+    fail_count: source.fail_count || 0,
+    use_count: source.use_count || 0,
+    pool: pool,
+    _selected: false,
+  };
+}
+
+function isTokenInvalid(item) {
+  return ['invalid', 'expired', 'disabled'].includes(String(item.status || '').toLowerCase());
+}
+
+function isTokenExhausted(item) {
+  const status = String(item.status || '').toLowerCase();
+  if (status === 'cooling') return true;
+  if (Boolean(item.quota_known) && Number(item.quota) <= 0) return true;
+  const tokenType = String(item.token_type || poolToType(item.pool));
+  if (tokenType === 'ssoSuper' && Boolean(item.heavy_quota_known) && Number(item.heavy_quota) <= 0) return true;
+  return false;
+}
+
+function isTokenActive(item) {
+  return !isTokenInvalid(item) && !isTokenExhausted(item);
+}
+
+function getTokenKey(token) {
+  return normalizeSsoToken(token);
+}
+
+function findTokenIndexByKey(tokenKey) {
+  const key = getTokenKey(tokenKey);
+  return flatTokens.findIndex((t) => getTokenKey(t.token) === key);
+}
+
+function refreshFilterStateFromDom() {
+  const getChecked = (id) => {
+    const el = document.getElementById(id);
+    return Boolean(el && el.checked);
+  };
+  filterState.typeSso = getChecked('filter-type-sso');
+  filterState.typeSuperSso = getChecked('filter-type-supersso');
+  filterState.statusActive = getChecked('filter-status-active');
+  filterState.statusInvalid = getChecked('filter-status-invalid');
+  filterState.statusExhausted = getChecked('filter-status-exhausted');
+}
+
+function applyFilters() {
+  refreshFilterStateFromDom();
+
+  const hasTypeFilter = filterState.typeSso || filterState.typeSuperSso;
+  const hasStatusFilter = filterState.statusActive || filterState.statusInvalid || filterState.statusExhausted;
+
+  displayTokens = flatTokens.filter((item) => {
+    const tokenType = String(item.token_type || poolToType(item.pool));
+    const matchesType = !hasTypeFilter
+      || (filterState.typeSso && tokenType === 'sso')
+      || (filterState.typeSuperSso && tokenType === 'ssoSuper');
+
+    if (!matchesType) return false;
+    if (!hasStatusFilter) return true;
+
+    const active = isTokenActive(item);
+    const invalid = isTokenInvalid(item);
+    const exhausted = isTokenExhausted(item);
+    return (filterState.statusActive && active)
+      || (filterState.statusInvalid && invalid)
+      || (filterState.statusExhausted && exhausted);
+  });
+
+  const resultEl = document.getElementById('filter-result-count');
+  if (resultEl) {
+    resultEl.textContent = String(displayTokens.length);
+  }
+}
+
+function onFilterChange() {
+  applyFilters();
+  renderTable();
+}
+
+function resetFilters() {
+  ['filter-type-sso', 'filter-type-supersso', 'filter-status-active', 'filter-status-invalid', 'filter-status-exhausted']
+    .forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.checked = false;
+    });
+  applyFilters();
+  renderTable();
+}
 
 function setAutoRegisterUiEnabled(enabled) {
   const btnAuto = document.getElementById('tab-btn-auto');
@@ -25,6 +187,16 @@ function setAutoRegisterUiEnabled(enabled) {
     } catch (e) {
       // ignore
     }
+  }
+}
+
+function setNsfwRefreshUiEnabled(enabled) {
+  const btn = document.getElementById('btn-refresh-nsfw-all');
+  if (!btn) return;
+  if (enabled) {
+    btn.classList.remove('hidden');
+  } else {
+    btn.classList.add('hidden');
   }
 }
 
@@ -48,9 +220,11 @@ async function detectWorkersRuntime() {
 async function applyRuntimeUiFlags() {
   // Default hide first; show back for local/docker after detection.
   setAutoRegisterUiEnabled(false);
+  setNsfwRefreshUiEnabled(false);
   isWorkersRuntime = await detectWorkersRuntime();
   if (!isWorkersRuntime) {
     setAutoRegisterUiEnabled(true);
+    setNsfwRefreshUiEnabled(true);
   }
 }
 
@@ -100,18 +274,20 @@ async function refreshStatsOnly() {
       const tokens = data[pool];
       if (!Array.isArray(tokens)) return;
       tokens.forEach(t => {
+        const row = normalizeTokenRecord(pool, t);
+        if (!row) return;
         totalTokens += 1;
-        const status = (typeof t === 'string' ? 'active' : (t.status || 'active'));
-        const quota = Number(typeof t === 'string' ? 0 : (t.quota || 0)) || 0;
-        const useCount = Number(typeof t === 'string' ? 0 : (t.use_count || 0)) || 0;
+        const useCount = Number(row.use_count || 0) || 0;
         totalCalls += useCount;
-        if (status === 'active') {
-          activeTokens += 1;
-          chatQuota += quota;
-        } else if (status === 'cooling') {
+        if (isTokenInvalid(row)) {
+          invalidTokens += 1;
+        } else if (isTokenExhausted(row)) {
           coolingTokens += 1;
         } else {
-          invalidTokens += 1;
+          activeTokens += 1;
+          if (Boolean(row.quota_known) && Number(row.quota) > 0) {
+            chatQuota += Number(row.quota);
+          }
         }
       });
     });
@@ -140,15 +316,17 @@ async function loadData() {
       headers: buildAuthHeaders(apiKey)
     });
     if (res.ok) {
-      const data = await res.json();
+      const data = await parseJsonSafely(res);
       allTokens = data;
       processTokens(data);
       updateStats(data);
+      applyFilters();
       renderTable();
     } else if (res.status === 401) {
       logout();
     } else {
-      throw new Error(`HTTP ${res.status}`);
+      const payload = await parseJsonSafely(res);
+      throw new Error(extractApiErrorMessage(payload, `HTTP ${res.status}`));
     }
   } catch (e) {
     showToast('加载失败: ' + e.message, 'error');
@@ -157,30 +335,27 @@ async function loadData() {
 
 // Convert pool dict to flattened array
 function processTokens(data) {
+  const prevSelected = new Set(flatTokens.filter(t => t._selected).map(t => getTokenKey(t.token)));
   flatTokens = [];
-  Object.keys(data).forEach(pool => {
+  const seen = new Set();
+
+  Object.keys(data || {}).forEach(pool => {
     const tokens = data[pool];
-    if (Array.isArray(tokens)) {
-      tokens.forEach(t => {
-        // Normalize
-        const tObj = typeof t === 'string'
-          ? { token: t, status: 'active', quota: 0, note: '', use_count: 0 }
-          : {
-            token: t.token,
-            status: t.status || 'active',
-            quota: t.quota || 0,
-            note: t.note || '',
-            fail_count: t.fail_count || 0,
-            use_count: t.use_count || 0
-          };
-        flatTokens.push({ ...tObj, pool: pool, _selected: false });
-      });
-    }
+    if (!Array.isArray(tokens)) return;
+
+    tokens.forEach(t => {
+      const row = normalizeTokenRecord(pool, t);
+      if (!row) return;
+      const dedupeKey = `${pool}:${getTokenKey(row.token)}`;
+      if (seen.has(dedupeKey)) return;
+      seen.add(dedupeKey);
+      row._selected = prevSelected.has(getTokenKey(row.token));
+      flatTokens.push(row);
+    });
   });
 }
 
 function updateStats(data) {
-  // Logic same as before, simplified reuse if possible, but let's re-run on flatTokens
   let totalTokens = flatTokens.length;
   let activeTokens = 0;
   let coolingTokens = 0;
@@ -189,13 +364,15 @@ function updateStats(data) {
   let totalCalls = 0;
 
   flatTokens.forEach(t => {
-    if (t.status === 'active') {
-      activeTokens++;
-      chatQuota += t.quota;
-    } else if (t.status === 'cooling') {
+    if (isTokenInvalid(t)) {
+      invalidTokens++;
+    } else if (isTokenExhausted(t)) {
       coolingTokens++;
     } else {
-      invalidTokens++;
+      activeTokens++;
+      if (Boolean(t.quota_known) && Number(t.quota) > 0) {
+        chatQuota += Number(t.quota);
+      }
     }
     totalCalls += Number(t.use_count || 0);
   });
@@ -226,18 +403,29 @@ function renderTable() {
   loading.classList.add('hidden');
 
   if (flatTokens.length === 0) {
+    emptyState.innerText = '暂无 Token，请点击右上角导入或添加。';
     emptyState.classList.remove('hidden');
     return;
   }
+  if (displayTokens.length === 0) {
+    emptyState.innerText = '当前筛选无结果。';
+    emptyState.classList.remove('hidden');
+    updateSelectionState();
+    return;
+  }
+  emptyState.innerText = '暂无 Token，请点击右上角导入或添加。';
   emptyState.classList.add('hidden');
 
-  flatTokens.forEach((item, index) => {
+  displayTokens.forEach((item) => {
     const tr = document.createElement('tr');
+    const tokenKey = getTokenKey(item.token);
+    const tokenEncoded = encodeURIComponent(item.token);
+    const tokenKeyEncoded = encodeURIComponent(tokenKey);
 
     // Checkbox (Center)
     const tdCheck = document.createElement('td');
     tdCheck.className = 'text-center';
-    tdCheck.innerHTML = `<input type="checkbox" class="checkbox" ${item._selected ? 'checked' : ''} onchange="toggleSelect(${index})">`;
+    tdCheck.innerHTML = `<input type="checkbox" class="checkbox" ${item._selected ? 'checked' : ''} onchange="toggleSelectByKey(decodeURIComponent('${tokenKeyEncoded}'))">`;
 
     // Token (Left)
     const tdToken = document.createElement('td');
@@ -248,7 +436,7 @@ function renderTable() {
     tdToken.innerHTML = `
                 <div class="flex items-center gap-2">
                     <span class="font-mono text-xs text-gray-500" title="${item.token}">${tokenShort}</span>
-                    <button class="text-gray-400 hover:text-black transition-colors" onclick="copyToClipboard('${item.token}', this)">
+                    <button class="text-gray-400 hover:text-black transition-colors" onclick="copyToClipboard(decodeURIComponent('${tokenEncoded}'), this)">
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                     </button>
                 </div>
@@ -262,16 +450,16 @@ function renderTable() {
     // Status (Center)
     const tdStatus = document.createElement('td');
     let statusClass = 'badge-gray';
-    if (item.status === 'active') statusClass = 'badge-green';
-    else if (item.status === 'cooling') statusClass = 'badge-orange';
+    if (isTokenActive(item)) statusClass = 'badge-green';
+    else if (isTokenExhausted(item)) statusClass = 'badge-orange';
     else statusClass = 'badge-red';
     tdStatus.className = 'text-center';
-    tdStatus.innerHTML = `<span class="badge ${statusClass}">${item.status}</span>`;
+    tdStatus.innerHTML = `<span class="badge ${statusClass}">${isTokenActive(item) ? 'active' : (isTokenExhausted(item) ? 'exhausted' : 'invalid')}</span>`;
 
     // Quota (Center)
     const tdQuota = document.createElement('td');
     tdQuota.className = 'text-center font-mono text-xs';
-    tdQuota.innerText = item.quota;
+    tdQuota.innerText = item.quota_known ? String(item.quota) : '-';
 
     // Note (Left)
     const tdNote = document.createElement('td');
@@ -283,13 +471,13 @@ function renderTable() {
     tdActions.className = 'text-center';
     tdActions.innerHTML = `
                 <div class="flex items-center justify-center gap-2">
-                     <button onclick="refreshStatus('${item.token}')" class="p-1 text-gray-400 hover:text-black rounded" title="刷新状态">
+                     <button onclick="refreshStatus(decodeURIComponent('${tokenEncoded}'), this)" class="p-1 text-gray-400 hover:text-black rounded" title="刷新状态">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                      </button>
-                     <button onclick="openEditModal(${index})" class="p-1 text-gray-400 hover:text-black rounded" title="编辑">
+                     <button onclick="openEditModalByKey(decodeURIComponent('${tokenKeyEncoded}'))" class="p-1 text-gray-400 hover:text-black rounded" title="编辑">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
                      </button>
-                     <button onclick="deleteToken(${index})" class="p-1 text-gray-400 hover:text-red-600 rounded" title="删除">
+                     <button onclick="deleteTokenByKey(decodeURIComponent('${tokenKeyEncoded}'))" class="p-1 text-gray-400 hover:text-red-600 rounded" title="删除">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                      </button>
                 </div>
@@ -313,20 +501,28 @@ function renderTable() {
 function toggleSelectAll() {
   const checkbox = document.getElementById('select-all');
   const checked = checkbox.checked;
-  flatTokens.forEach(t => t._selected = checked);
+  const visibleKeys = new Set(displayTokens.map((t) => getTokenKey(t.token)));
+  flatTokens.forEach((t) => {
+    if (visibleKeys.has(getTokenKey(t.token))) {
+      t._selected = checked;
+    }
+  });
   renderTable();
 }
 
-function toggleSelect(index) {
-  flatTokens[index]._selected = !flatTokens[index]._selected;
+function toggleSelectByKey(tokenKey) {
+  const idx = findTokenIndexByKey(tokenKey);
+  if (idx < 0) return;
+  flatTokens[idx]._selected = !flatTokens[idx]._selected;
   updateSelectionState();
 }
 
 function updateSelectionState() {
   const selectedCount = flatTokens.filter(t => t._selected).length;
-  const allSelected = flatTokens.length > 0 && selectedCount === flatTokens.length;
+  const allSelected = displayTokens.length > 0 && displayTokens.every((t) => t._selected);
 
-  document.getElementById('select-all').checked = allSelected;
+  const selectAll = document.getElementById('select-all');
+  if (selectAll) selectAll.checked = allSelected;
   document.getElementById('selected-count').innerText = selectedCount;
   setActionButtonsState();
 }
@@ -423,11 +619,10 @@ async function submitManualAdd() {
   const noteInput = document.getElementById('add-token-note');
 
   if (!tokenInput) return;
-  let token = tokenInput.value.trim();
+  let token = normalizeSsoToken(tokenInput.value.trim());
   if (!token) return showToast('Token 不能为空', 'error');
-  if (token.startsWith('sso=')) token = token.slice(4);
 
-  if (flatTokens.some(t => t.token === token)) {
+  if (flatTokens.some(t => getTokenKey(t.token) === token)) {
     return showToast('Token 已存在', 'error');
   }
 
@@ -440,6 +635,10 @@ async function submitManualAdd() {
     token: token,
     pool: pool,
     quota: quota,
+    quota_known: true,
+    heavy_quota: -1,
+    heavy_quota_known: false,
+    token_type: poolToType(pool),
     note: note,
     status: 'active',
     use_count: 0,
@@ -448,6 +647,7 @@ async function submitManualAdd() {
 
   await syncToServer();
   closeAddModal();
+  applyFilters();
   loadData();
 }
 
@@ -513,8 +713,8 @@ async function startAutoRegister() {
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      showToast(err.detail || '启动失败', 'error');
+      const err = await parseJsonSafely(res);
+      showToast(extractApiErrorMessage(err, '启动失败'), 'error');
       if (btn) btn.disabled = false;
       return;
     }
@@ -555,8 +755,8 @@ async function stopAutoRegister() {
     });
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      showToast(err.detail || '停止失败', 'error');
+      const err = await parseJsonSafely(res);
+      showToast(extractApiErrorMessage(err, '停止失败'), 'error');
       return;
     }
 
@@ -655,6 +855,19 @@ async function pollAutoRegisterStatus() {
 
 // Modal Logic
 let currentEditIndex = -1;
+
+function openEditModalByKey(tokenKey) {
+  const idx = findTokenIndexByKey(tokenKey);
+  if (idx < 0) return;
+  openEditModal(idx);
+}
+
+function deleteTokenByKey(tokenKey) {
+  const idx = findTokenIndexByKey(tokenKey);
+  if (idx < 0) return;
+  deleteToken(idx);
+}
+
 function openEditModal(index) {
   const modal = document.getElementById('edit-modal');
   if (!modal) return;
@@ -709,7 +922,7 @@ function closeEditModal() {
 
 async function saveEdit() {
   // Collect data
-  let token, pool, quota, note;
+  let token;
   const newPool = document.getElementById('edit-pool').value.trim();
   const newQuota = parseInt(document.getElementById('edit-quota').value) || 0;
   const newNote = document.getElementById('edit-note').value.trim().slice(0, 50);
@@ -722,14 +935,16 @@ async function saveEdit() {
     // Update flatTokens first to reflect UI
     item.pool = newPool || 'ssoBasic';
     item.quota = newQuota;
+    item.quota_known = true;
+    item.token_type = poolToType(item.pool);
     item.note = newNote;
   } else {
     // Creating new
-    token = document.getElementById('edit-token-display').value.trim();
+    token = normalizeSsoToken(document.getElementById('edit-token-display').value.trim());
     if (!token) return showToast('Token 不能为空', 'error');
 
     // Check if exists
-    if (flatTokens.some(t => t.token === token)) {
+    if (flatTokens.some(t => getTokenKey(t.token) === token)) {
       return showToast('Token 已存在', 'error');
     }
 
@@ -737,6 +952,10 @@ async function saveEdit() {
       token: token,
       pool: newPool || 'ssoBasic',
       quota: newQuota,
+      quota_known: true,
+      heavy_quota: -1,
+      heavy_quota_known: false,
+      token_type: poolToType(newPool || 'ssoBasic'),
       note: newNote,
       status: 'active', // default
       use_count: 0,
@@ -746,6 +965,7 @@ async function saveEdit() {
 
   await syncToServer();
   closeEditModal();
+  applyFilters();
   // Reload to ensure consistent state/grouping
   // Or simpler: just re-render but syncToServer does the hard work
   loadData();
@@ -755,6 +975,7 @@ async function deleteToken(index) {
   const ok = await confirmAction('确定要删除此 Token 吗？', { okText: '删除' });
   if (!ok) return;
   flatTokens.splice(index, 1);
+  applyFilters();
   syncToServer().then(loadData);
 }
 
@@ -768,9 +989,10 @@ async function syncToServer() {
   flatTokens.forEach(t => {
     if (!newTokens[t.pool]) newTokens[t.pool] = [];
     newTokens[t.pool].push({
-      token: t.token,
+      token: normalizeSsoToken(t.token),
       status: t.status,
       quota: t.quota,
+      heavy_quota: t.heavy_quota,
       note: t.note,
       fail_count: t.fail_count,
       use_count: t.use_count || 0
@@ -786,9 +1008,20 @@ async function syncToServer() {
       },
       body: JSON.stringify(newTokens)
     });
-    if (!res.ok) showToast('保存失败', 'error');
+    const payload = await parseJsonSafely(res);
+    if (!res.ok) {
+      showToast(extractApiErrorMessage(payload, '保存失败'), 'error');
+      return null;
+    }
+
+    const triggered = Number(payload?.nsfw_refresh?.triggered || 0);
+    if (triggered > 0) {
+      showToast(`已后台触发 ${triggered} 个 Token 的协议/年龄/NSFW 刷新`, 'info');
+    }
+    return payload;
   } catch (e) {
     showToast('保存错误: ' + e.message, 'error');
+    return null;
   }
 }
 
@@ -819,13 +1052,17 @@ async function submitImport() {
   const lines = text.split('\n');
 
   lines.forEach(line => {
-    const t = line.trim();
-    if (t && !flatTokens.some(ft => ft.token === t)) {
+    const t = normalizeSsoToken(line.trim());
+    if (t && !flatTokens.some(ft => getTokenKey(ft.token) === t)) {
       flatTokens.push({
         token: t,
         pool: pool,
         status: 'active',
         quota: 80,
+        quota_known: true,
+        heavy_quota: -1,
+        heavy_quota_known: false,
+        token_type: poolToType(pool),
         note: '',
         use_count: 0,
         _selected: false
@@ -835,6 +1072,7 @@ async function submitImport() {
 
   await syncToServer();
   closeImportModal();
+  applyFilters();
   loadData();
 }
 
@@ -873,26 +1111,28 @@ async function copyToClipboard(text, btn) {
   }
 }
 
-async function refreshStatus(token) {
+async function refreshStatus(token, btnEl) {
   try {
-    const btn = event.currentTarget; // Get button element if triggered by click
+    const btn = btnEl || null;
     if (btn) {
       btn.innerHTML = `<svg class="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>`;
     }
 
+    const normalized = normalizeSsoToken(token);
     const res = await fetch('/api/v1/admin/tokens/refresh', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...buildAuthHeaders(apiKey)
       },
-      body: JSON.stringify({ token: token })
+      body: JSON.stringify({ token: normalized })
     });
 
-    const data = await res.json();
+    const data = await parseJsonSafely(res);
 
-    if (res.ok && data.status === 'success') {
-      const isSuccess = data.results && data.results[token];
+    if (res.ok && data && data.status === 'success') {
+      const results = data.results || {};
+      const isSuccess = Boolean(results[normalized] ?? results[`sso=${normalized}`]);
       loadData();
 
       if (isSuccess) {
@@ -901,11 +1141,68 @@ async function refreshStatus(token) {
         showToast('刷新失败', 'error');
       }
     } else {
-      showToast('刷新失败', 'error');
+      showToast(extractApiErrorMessage(data, '刷新失败'), 'error');
     }
   } catch (e) {
     console.error(e);
-    showToast('请求错误', 'error');
+    showToast(e?.message ? `请求错误: ${e.message}` : '请求错误', 'error');
+  }
+}
+
+async function refreshAllNsfw() {
+  if (isNsfwRefreshAllRunning) {
+    showToast('NSFW 刷新任务进行中', 'info');
+    return;
+  }
+
+  const ok = await confirmAction(
+    '将对全部 Token 执行：同意用户协议 + 设置年龄 + 开启 NSFW。未成功的 Token 会自动标记为失效，是否继续？',
+    { okText: '开始刷新' }
+  );
+  if (!ok) return;
+
+  const btn = document.getElementById('btn-refresh-nsfw-all');
+  const originalText = btn ? btn.innerHTML : '';
+  isNsfwRefreshAllRunning = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '刷新中...';
+  }
+
+  try {
+    const res = await fetch('/api/v1/admin/tokens/nsfw/refresh', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...buildAuthHeaders(apiKey)
+      },
+      body: JSON.stringify({ all: true })
+    });
+
+    const payload = await parseJsonSafely(res);
+    if (!res.ok) {
+      showToast(extractApiErrorMessage(payload, 'NSFW 刷新失败'), 'error');
+      return;
+    }
+
+    const summary = payload?.summary || {};
+    const total = Number(summary.total || 0);
+    const success = Number(summary.success || 0);
+    const failed = Number(summary.failed || 0);
+    const invalidated = Number(summary.invalidated || 0);
+    showToast(
+      `NSFW 刷新完成：总计 ${total}，成功 ${success}，失败 ${failed}，失效 ${invalidated}`,
+      failed > 0 ? 'info' : 'success'
+    );
+    loadData();
+  } catch (e) {
+    showToast(e?.message ? `NSFW 刷新失败: ${e.message}` : 'NSFW 刷新失败', 'error');
+  } finally {
+    isNsfwRefreshAllRunning = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalText || '一键刷新 NSFW';
+    }
   }
 }
 
@@ -922,7 +1219,7 @@ async function startBatchRefresh() {
   isBatchProcessing = true;
   isBatchPaused = false;
   currentBatchAction = 'refresh';
-  batchQueue = selected.map(t => t.token);
+  batchQueue = selected.map(t => normalizeSsoToken(t.token));
   batchTotal = batchQueue.length;
   batchProcessed = 0;
 
@@ -956,7 +1253,8 @@ async function processBatchQueue() {
     if (res.ok) {
       batchProcessed += chunk.length;
     } else {
-      showToast('部分刷新失败', 'error');
+      const payload = await parseJsonSafely(res);
+      showToast(`部分刷新失败: ${extractApiErrorMessage(payload, '请求失败')}`, 'error');
       batchProcessed += chunk.length;
     }
   } catch (e) {
@@ -1060,7 +1358,7 @@ async function startBatchDelete() {
   isBatchProcessing = true;
   isBatchPaused = false;
   currentBatchAction = 'delete';
-  batchQueue = selected.map(t => t.token);
+  batchQueue = selected.map(t => normalizeSsoToken(t.token));
   batchTotal = batchQueue.length;
   batchProcessed = 0;
 
@@ -1126,7 +1424,8 @@ async function processDeleteQueue() {
   }
   const chunk = batchQueue.splice(0, BATCH_SIZE);
   const toRemove = new Set(chunk);
-  flatTokens = flatTokens.filter(t => !toRemove.has(t.token));
+  flatTokens = flatTokens.filter(t => !toRemove.has(normalizeSsoToken(t.token)));
+  applyFilters();
   try {
     await syncToServer();
     batchProcessed += chunk.length;

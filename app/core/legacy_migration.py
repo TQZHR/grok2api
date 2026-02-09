@@ -125,7 +125,7 @@ async def migrate_legacy_account_settings(
     data_dir: Path | None = None,
 ) -> Dict[str, Any]:
     """
-    After legacy data migration, run a one-time TOS + NSFW enablement for existing accounts.
+    After legacy data migration, run a one-time TOS + BirthDate + NSFW pass for existing accounts.
 
     This is best-effort and guarded by a cross-process lock + done marker.
     """
@@ -134,11 +134,11 @@ async def migrate_legacy_account_settings(
     lock_dir = data_root / ".locks"
     lock_dir.mkdir(parents=True, exist_ok=True)
 
-    done_marker = lock_dir / "legacy_accounts_tos_nsfw_v1.done"
+    done_marker = lock_dir / "legacy_accounts_tos_birth_nsfw_v2.done"
     if done_marker.exists():
         return {"migrated": False, "reason": "already_done"}
 
-    lock_file = lock_dir / "legacy_accounts_tos_nsfw_v1.lock"
+    lock_file = lock_dir / "legacy_accounts_tos_birth_nsfw_v2.lock"
     fd: int | None = None
 
     try:
@@ -154,7 +154,11 @@ async def migrate_legacy_account_settings(
 
         from app.core.config import get_config
         from app.core.storage import get_storage
-        from app.services.register.services import UserAgreementService, NsfwSettingsService
+        from app.services.register.services import (
+            UserAgreementService,
+            BirthDateService,
+            NsfwSettingsService,
+        )
 
         storage = get_storage()
         try:
@@ -215,6 +219,7 @@ async def migrate_legacy_account_settings(
                 return False
 
             user_service = UserAgreementService(cf_clearance=cf_clearance)
+            birth_service = BirthDateService(cf_clearance=cf_clearance)
             nsfw_service = NsfwSettingsService(cf_clearance=cf_clearance)
 
             tos_result = user_service.accept_tos_version(
@@ -222,12 +227,23 @@ async def migrate_legacy_account_settings(
                 sso_rw=sso_rw_val or sso_val,
                 impersonate="chrome120",
             )
+            if not tos_result.get("ok"):
+                return False
+
+            birth_result = birth_service.set_birth_date(
+                sso=sso_val,
+                sso_rw=sso_rw_val or sso_val,
+                impersonate="chrome120",
+            )
+            if not birth_result.get("ok"):
+                return False
+
             nsfw_result = nsfw_service.enable_nsfw(
                 sso=sso_val,
                 sso_rw=sso_rw_val or sso_val,
                 impersonate="chrome120",
             )
-            return bool(tos_result.get("ok") and nsfw_result.get("ok"))
+            return bool(nsfw_result.get("ok"))
 
         sem = asyncio.Semaphore(concurrency)
 
