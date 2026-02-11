@@ -268,7 +268,7 @@ adminRoutes.get("/api/v1/admin/config", requireAdminAuth, async (c) => {
         base_proxy_url: String(settings.grok.proxy_url ?? ""),
         asset_proxy_url: String(settings.grok.cache_proxy_url ?? ""),
         cf_clearance: String(settings.grok.cf_clearance ?? ""),
-        grok        max_retry: Number(settings.grok.max_retry ?? 3),
+        max_retry: Number(settings.grok.max_retry ?? 3),
         retry_status_codes: Array.isArray(settings.grok.retry_status_codes) ? settings.grok.retry_status_codes : [401, 429, 403],
         image_generation_method: normalizeImageGenerationMethod(
           settings.grok.image_generation_method,
