@@ -153,6 +153,40 @@ class TokenManager:
             self._save_task = None
             if self._dirty:
                 self._schedule_save()
+
+    @staticmethod
+    def _extract_cookie_value(cookie_str: str, name: str) -> str | None:
+        needle = f"{name}="
+        if needle not in cookie_str:
+            return None
+        for part in cookie_str.split(";"):
+            part = part.strip()
+            if part.startswith(needle):
+                value = part[len(needle):].strip()
+                return value or None
+        return None
+
+    @classmethod
+    def _normalize_input_token(cls, token_str: str) -> str:
+        raw = str(token_str or "").strip()
+        if not raw:
+            return ""
+        if ";" in raw:
+            return (cls._extract_cookie_value(raw, "sso") or "").strip()
+        if raw.startswith("sso="):
+            return raw[4:].strip()
+        return raw
+
+    def _find_token_info(self, token_str: str) -> tuple[Optional[TokenInfo], str]:
+        raw_token = self._normalize_input_token(token_str)
+        if not raw_token:
+            return None, ""
+        for pool in self.pools.values():
+            token = pool.get(raw_token)
+            if token:
+                return token, raw_token
+        return None, raw_token
+
     def get_token(self, pool_name: str = "ssoBasic") -> Optional[str]:
         """
         获取可用 Token
@@ -368,15 +402,51 @@ class TokenManager:
         return True
 
     async def mark_asset_clear(self, token: str) -> bool:
-        """记录在线资产清理时间"""
-        raw_token = token[4:] if token.startswith("sso=") else token
-        for pool in self.pools.values():
-            info = pool.get(raw_token)
-            if info:
-                info.last_asset_clear_at = int(datetime.now().timestamp() * 1000)
-                self._schedule_save()
-                return True
+        """Record online asset cleanup timestamp."""
+        info, _ = self._find_token_info(token)
+        if info:
+            info.last_asset_clear_at = int(datetime.now().timestamp() * 1000)
+            self._schedule_save()
+            return True
         return False
+
+    async def set_token_invalid(self, token_str: str, reason: str = "", save: bool = True) -> bool:
+        """Mark a token as expired/invalid."""
+        token, raw_token = self._find_token_info(token_str)
+        if not token:
+            logger.warning(f"Token {raw_token[:10]}...: not found for invalidation")
+            return False
+
+        token.status = TokenStatus.EXPIRED
+        token.fail_count = max(token.fail_count, FAIL_THRESHOLD)
+        token.last_fail_at = int(datetime.now().timestamp() * 1000)
+        if reason:
+            token.last_fail_reason = str(reason)[:500]
+
+        if save:
+            await self._save()
+        return True
+
+    async def mark_token_account_settings_success(self, token_str: str, save: bool = True) -> bool:
+        """Reset failure state after account-settings flow succeeded."""
+        token, raw_token = self._find_token_info(token_str)
+        if not token:
+            logger.warning(f"Token {raw_token[:10]}...: not found for account-settings success")
+            return False
+
+        token.fail_count = 0
+        token.last_fail_at = None
+        token.last_fail_reason = None
+        token.last_sync_at = int(datetime.now().timestamp() * 1000)
+        token.status = TokenStatus.COOLING if token.quota == 0 else TokenStatus.ACTIVE
+
+        if save:
+            await self._save()
+        return True
+
+    async def commit(self):
+        """Persist current in-memory token state."""
+        await self._save()
 
     async def remove(self, token: str) -> bool:
         """

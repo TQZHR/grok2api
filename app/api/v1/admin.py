@@ -17,6 +17,10 @@ import orjson
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 from app.core.logger import logger
 from app.services.register import get_auto_register_manager
+from app.services.register.account_settings_refresh import (
+    refresh_account_settings_for_tokens,
+    normalize_sso_token as normalize_refresh_token,
+)
 from app.services.api_keys import api_key_manager
 from app.services.grok.model import ModelService
 from app.services.grok.imagine_generation import (
@@ -149,6 +153,8 @@ async def admin_imagine_ws(websocket: WebSocket):
             run_task.cancel()
             try:
                 await run_task
+            except asyncio.CancelledError:
+                pass
             except Exception:
                 pass
         run_task = None
@@ -301,6 +307,8 @@ async def admin_imagine_ws(websocket: WebSocket):
                 )
     except WebSocketDisconnect:
         logger.debug("WebSocket disconnected by client")
+    except asyncio.CancelledError:
+        logger.debug("WebSocket handler cancelled")
     except Exception as e:
         logger.warning(f"WebSocket error: {e}")
     finally:
@@ -452,6 +460,72 @@ def _normalize_admin_token_item(pool_name: str, item: Any) -> dict | None:
         "fail_count": _safe_int(item.get("fail_count") or 0, 0),
         "use_count": _safe_int(item.get("use_count") or 0, 0),
     }
+
+
+def _collect_tokens_from_pool_payload(payload: Any) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+
+    collected: list[str] = []
+    seen: set[str] = set()
+    for raw_items in payload.values():
+        if not isinstance(raw_items, list):
+            continue
+        for item in raw_items:
+            token_raw = item if isinstance(item, str) else (item.get("token") if isinstance(item, dict) else "")
+            token = normalize_refresh_token(str(token_raw or "").strip())
+            if not token or token in seen:
+                continue
+            seen.add(token)
+            collected.append(token)
+    return collected
+
+
+def _resolve_nsfw_refresh_concurrency(override: Any = None) -> int:
+    source = override if override is not None else get_config("token.nsfw_refresh_concurrency", 10)
+    try:
+        value = int(source)
+    except Exception:
+        value = 10
+    return max(1, value)
+
+
+def _resolve_nsfw_refresh_retries(override: Any = None) -> int:
+    source = override if override is not None else get_config("token.nsfw_refresh_retries", 3)
+    try:
+        value = int(source)
+    except Exception:
+        value = 3
+    return max(0, value)
+
+
+def _trigger_account_settings_refresh_background(
+    tokens: list[str],
+    concurrency: int,
+    retries: int,
+) -> None:
+    if not tokens:
+        return
+
+    async def _run() -> None:
+        try:
+            result = await refresh_account_settings_for_tokens(
+                tokens=tokens,
+                concurrency=concurrency,
+                retries=retries,
+            )
+            summary = result.get("summary") or {}
+            logger.info(
+                "Background account-settings refresh finished: total={} success={} failed={} invalidated={}",
+                summary.get("total", 0),
+                summary.get("success", 0),
+                summary.get("failed", 0),
+                summary.get("invalidated", 0),
+            )
+        except Exception as exc:
+            logger.warning("Background account-settings refresh failed: {}", exc)
+
+    asyncio.create_task(_run())
 
 
 @router.get("/api/v1/admin/keys", dependencies=[Depends(verify_api_key)])
@@ -619,15 +693,47 @@ async def get_tokens_api():
 
 @router.post("/api/v1/admin/tokens", dependencies=[Depends(verify_api_key)])
 async def update_tokens_api(data: dict):
-    """更新 Token 信息"""
+    """Update token payload and trigger background account-settings refresh for new tokens."""
     storage = get_storage()
     try:
         from app.services.token.manager import get_token_manager
+
+        posted_data = data if isinstance(data, dict) else {}
+        existing_tokens: list[str] = []
+        added_tokens: list[str] = []
+
         async with storage.acquire_lock("tokens_save", timeout=10):
-            await storage.save_tokens(data)
+            old_data = await storage.load_tokens()
+            existing_tokens = _collect_tokens_from_pool_payload(
+                old_data if isinstance(old_data, dict) else {}
+            )
+
+            await storage.save_tokens(posted_data)
             mgr = await get_token_manager()
             await mgr.reload()
-        return {"status": "success", "message": "Token 已更新"}
+
+            new_tokens = _collect_tokens_from_pool_payload(posted_data)
+            existing_set = set(existing_tokens)
+            added_tokens = [token for token in new_tokens if token not in existing_set]
+
+        concurrency = _resolve_nsfw_refresh_concurrency()
+        retries = _resolve_nsfw_refresh_retries()
+        _trigger_account_settings_refresh_background(
+            tokens=added_tokens,
+            concurrency=concurrency,
+            retries=retries,
+        )
+
+        return {
+            "status": "success",
+            "message": "Token updated",
+            "nsfw_refresh": {
+                "mode": "background",
+                "triggered": len(added_tokens),
+                "concurrency": concurrency,
+                "retries": retries,
+            },
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -661,6 +767,56 @@ async def refresh_tokens_api(data: dict):
         return {"status": "success", "results": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/v1/admin/tokens/nsfw/refresh", dependencies=[Depends(verify_api_key)])
+async def refresh_tokens_nsfw_api(data: dict):
+    """Refresh account settings (TOS + birth date + NSFW) for selected/all tokens."""
+    payload = data if isinstance(data, dict) else {}
+    mgr = await get_token_manager()
+
+    tokens: list[str] = []
+    seen: set[str] = set()
+
+    if bool(payload.get("all")):
+        for pool in mgr.pools.values():
+            for info in pool.list():
+                token = normalize_refresh_token(str(info.token or "").strip())
+                if not token or token in seen:
+                    continue
+                seen.add(token)
+                tokens.append(token)
+    else:
+        candidates: list[str] = []
+        single = payload.get("token")
+        if isinstance(single, str):
+            candidates.append(single)
+        batch = payload.get("tokens")
+        if isinstance(batch, list):
+            candidates.extend([item for item in batch if isinstance(item, str)])
+
+        for raw in candidates:
+            token = normalize_refresh_token(str(raw or "").strip())
+            if not token or token in seen:
+                continue
+            seen.add(token)
+            tokens.append(token)
+
+    if not tokens:
+        raise HTTPException(status_code=400, detail="No tokens provided")
+
+    concurrency = _resolve_nsfw_refresh_concurrency(payload.get("concurrency"))
+    retries = _resolve_nsfw_refresh_retries(payload.get("retries"))
+    result = await refresh_account_settings_for_tokens(
+        tokens=tokens,
+        concurrency=concurrency,
+        retries=retries,
+    )
+    return {
+        "status": "success",
+        "summary": result.get("summary") or {},
+        "failed": result.get("failed") or [],
+    }
 
 
 @router.post("/api/v1/admin/tokens/auto-register", dependencies=[Depends(verify_api_key)])

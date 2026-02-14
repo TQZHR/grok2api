@@ -13,6 +13,7 @@ let autoRegisterTimer = null;
 let autoRegisterLastAdded = 0;
 let liveStatsTimer = null;
 let isWorkersRuntime = false;
+let isNsfwRefreshAllRunning = false;
 
 let displayTokens = [];
 const filterState = {
@@ -189,6 +190,16 @@ function setAutoRegisterUiEnabled(enabled) {
   }
 }
 
+function setNsfwRefreshUiEnabled(enabled) {
+  const btn = document.getElementById('btn-refresh-nsfw-all');
+  if (!btn) return;
+  if (enabled) {
+    btn.classList.remove('hidden');
+  } else {
+    btn.classList.add('hidden');
+  }
+}
+
 async function detectWorkersRuntime() {
   try {
     const res = await fetch('/health', { cache: 'no-store' });
@@ -209,9 +220,11 @@ async function detectWorkersRuntime() {
 async function applyRuntimeUiFlags() {
   // Default hide first; show back for local/docker after detection.
   setAutoRegisterUiEnabled(false);
+  setNsfwRefreshUiEnabled(false);
   isWorkersRuntime = await detectWorkersRuntime();
   if (!isWorkersRuntime) {
     setAutoRegisterUiEnabled(true);
+    setNsfwRefreshUiEnabled(true);
   }
 }
 
@@ -995,12 +1008,20 @@ async function syncToServer() {
       },
       body: JSON.stringify(newTokens)
     });
+    const payload = await parseJsonSafely(res);
     if (!res.ok) {
-      const payload = await parseJsonSafely(res);
       showToast(extractApiErrorMessage(payload, '保存失败'), 'error');
+      return null;
     }
+
+    const triggered = Number(payload?.nsfw_refresh?.triggered || 0);
+    if (triggered > 0) {
+      showToast(`已后台触发 ${triggered} 个 Token 的协议/年龄/NSFW 刷新`, 'info');
+    }
+    return payload;
   } catch (e) {
     showToast('保存错误: ' + e.message, 'error');
+    return null;
   }
 }
 
@@ -1125,6 +1146,63 @@ async function refreshStatus(token, btnEl) {
   } catch (e) {
     console.error(e);
     showToast(e?.message ? `请求错误: ${e.message}` : '请求错误', 'error');
+  }
+}
+
+async function refreshAllNsfw() {
+  if (isNsfwRefreshAllRunning) {
+    showToast('NSFW 刷新任务进行中', 'info');
+    return;
+  }
+
+  const ok = await confirmAction(
+    '将对全部 Token 执行：同意用户协议 + 设置年龄 + 开启 NSFW。未成功的 Token 会自动标记为失效，是否继续？',
+    { okText: '开始刷新' }
+  );
+  if (!ok) return;
+
+  const btn = document.getElementById('btn-refresh-nsfw-all');
+  const originalText = btn ? btn.innerHTML : '';
+  isNsfwRefreshAllRunning = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '刷新中...';
+  }
+
+  try {
+    const res = await fetch('/api/v1/admin/tokens/nsfw/refresh', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...buildAuthHeaders(apiKey)
+      },
+      body: JSON.stringify({ all: true })
+    });
+
+    const payload = await parseJsonSafely(res);
+    if (!res.ok) {
+      showToast(extractApiErrorMessage(payload, 'NSFW 刷新失败'), 'error');
+      return;
+    }
+
+    const summary = payload?.summary || {};
+    const total = Number(summary.total || 0);
+    const success = Number(summary.success || 0);
+    const failed = Number(summary.failed || 0);
+    const invalidated = Number(summary.invalidated || 0);
+    showToast(
+      `NSFW 刷新完成：总计 ${total}，成功 ${success}，失败 ${failed}，失效 ${invalidated}`,
+      failed > 0 ? 'info' : 'success'
+    );
+    loadData();
+  } catch (e) {
+    showToast(e?.message ? `NSFW 刷新失败: ${e.message}` : 'NSFW 刷新失败', 'error');
+  } finally {
+    isNsfwRefreshAllRunning = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalText || '一键刷新 NSFW';
+    }
   }
 }
 

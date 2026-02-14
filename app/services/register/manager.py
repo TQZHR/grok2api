@@ -284,7 +284,7 @@ class AutoRegisterManager:
                 job.status = "stopped"
             elif job.status != "error":
                 # If we returned without reaching the target, treat it as a failure.
-                # This makes issues like "TOS/NSFW not enabled" visible to the UI as a failed job.
+                # This makes issues like "TOS/BirthDate/NSFW not enabled" visible to the UI as a failed job.
                 if job.completed < job.total:
                     job.status = "error"
                     suffix = f" Last error: {job.last_error}" if job.last_error else ""

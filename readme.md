@@ -124,8 +124,8 @@ python scripts/smoke_test.py --base-url http://127.0.0.1:8000
 - 可设置注册数量（不填默认 `100`）
 - 可设置并发（默认 `10`）
 - 注册前会自动启动本地 Turnstile Solver（默认 5 线程），注册结束后自动关闭
-- 注册成功后会自动执行：同意用户协议（TOS）+ 开启 NSFW
-  - 若协议未成功同意或 NSFW 未成功开启，会判定该次注册失败并在前端显示错误原因
+- 注册成功后会自动执行：同意用户协议（TOS）+ 设置年龄 + 开启 NSFW
+  - 若 TOS / 年龄 / NSFW 任一步骤失败，会判定该次注册失败并在前端显示错误原因
 
 自动注册前置配置（在「配置管理」-> `register.*`）：
 - `register.worker_domain` / `register.email_domain` / `register.admin_password`：临时邮箱 Worker 配置
@@ -133,7 +133,7 @@ python scripts/smoke_test.py --base-url http://127.0.0.1:8000
 - 可选：`register.yescaptcha_key`（配置后优先走 YesCaptcha，无需本地 solver）
 
 升级兼容：
-- 本地部署升级后会自动对「旧 Token」做一次 TOS + NSFW（并发 10，best-effort，仅执行一次，避免重复刷）。
+- 本地部署升级后会自动对「旧 Token」做一次 TOS + 设置年龄 + NSFW（并发 10，best-effort，仅执行一次，避免重复刷）。
 
 ### 环境变量
 
@@ -155,7 +155,7 @@ python scripts/smoke_test.py --base-url http://127.0.0.1:8000
 - 升级时自动兼容迁移（本地/Docker）：
   - 旧版配置：检测到 `data/setting.toml` 时，会按“缺失字段/仍为默认值”的策略合并到新配置
   - 旧版缓存目录：`data/temp/{image,video}` -> `data/tmp/{image,video}`
-  - 旧账号一次性修复（best-effort）：升级后会对现有 Token 自动执行一次「同意用户协议 + 开启 NSFW」（并发 10）
+  - 旧账号一次性修复（best-effort）：升级后会对现有 Token 自动执行一次「同意用户协议 + 设置年龄 + 开启 NSFW」（并发 10）
 
 
 ### 可用次数
@@ -379,6 +379,8 @@ curl http://localhost:8000/v1/images/edits \
 |                       | `fail_threshold`           | 失败阈值     | 单个 Token 连续失败多少次后被标记为不可用。          | `5`                                                     |
 |                       | `save_delay_ms`            | 保存延迟     | Token 变更合并写入的延迟（毫秒）。                   | `500`                                                   |
 |                       | `reload_interval_sec`      | 一致性刷新   | 多 worker 场景下 Token 状态刷新间隔（秒）。          | `30`                                                    |
+|                       | `nsfw_refresh_concurrency` | NSFW 刷新并发 | 同意协议/年龄/NSFW 刷新的默认并发数。                | `10`                                                    |
+|                       | `nsfw_refresh_retries`     | NSFW 刷新重试 | 刷新失败后的额外重试次数（不含首次）。               | `3`                                                     |
 | **cache**       | `enable_auto_clean`        | 自动清理     | 是否启用缓存自动清理，开启后按上限自动回收。         | `true`                                                  |
 |                       | `limit_mb`                 | 清理阈值     | 缓存大小阈值（MB），超过阈值会触发清理。             | `1024`                                                  |
 | **performance** | `assets_max_concurrent`    | 资产并发上限 | 资源上传/下载/列表的并发上限。推荐 25。              | `25`                                                    |
@@ -395,6 +397,16 @@ curl http://localhost:8000/v1/images/edits \
 - 新增 Token 统一归一化（`normalizeSsoToken`），修复 `sso=` 前缀导致的去重、导入、批量选择不一致问题。
 - 修复 API Key 更新接口“key 不存在仍返回成功”问题，统一为 `404`。
 - 优化 Token/API Key 页面错误提示，优先展示后端具体错误（`detail/error/message`）。
+
+## 本次更新补充（本地/Docker）
+
+- 新增：导入/手动添加/外部写入新增 Token 后，会在后台自动执行 `同意协议 + 设置年龄 + 开启 NSFW`。
+- 新增：Token 管理页增加「一键刷新 NSFW」按钮，默认对全部 Token 执行上述流程。
+- 新增：批量刷新默认并发 `10`，失败后额外重试 `3` 次；重试耗尽自动标记为失效。
+- 新增配置：
+  - `token.nsfw_refresh_concurrency`（默认 `10`）
+  - `token.nsfw_refresh_retries`（默认 `3`）
+- 说明：该功能仅在 `python-fastapi`（本地/Docker）开放；`cloudflare-workers` 侧不展示该按钮。
 
 ## Star History
 

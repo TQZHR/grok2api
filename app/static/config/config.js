@@ -5,6 +5,8 @@ const NUMERIC_FIELDS = new Set([
   'max_retry',
   'refresh_interval_hours',
   'fail_threshold',
+  'nsfw_refresh_concurrency',
+  'nsfw_refresh_retries',
   'limit_mb',
   'save_delay_ms',
   'assets_max_concurrent',
@@ -49,6 +51,8 @@ const LOCALE_MAP = {
     "auto_refresh": { title: "自动刷新", desc: "是否开启 Token 自动刷新机制。" },
     "refresh_interval_hours": { title: "刷新间隔", desc: "Token 刷新的时间间隔（小时）。" },
     "fail_threshold": { title: "失败阈值", desc: "单个 Token 连续失败多少次后标记为不可用。" },
+    "nsfw_refresh_concurrency": { title: "NSFW 刷新并发", desc: "账户设置刷新（协议/年龄/NSFW）时的默认并发数。" },
+    "nsfw_refresh_retries": { title: "NSFW 刷新重试", desc: "账户设置刷新失败后的额外重试次数（不含首次）。" },
     "save_delay_ms": { title: "保存延迟", desc: "Token 变更合并写入的延迟（毫秒）。" },
     "reload_interval_sec": { title: "一致性刷新", desc: "多 worker 场景下 Token 状态刷新间隔（秒）。" }
   },

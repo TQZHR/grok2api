@@ -697,14 +697,14 @@ async function refreshModels() {
 
   const headers = buildApiHeaders();
   if (!headers.Authorization) {
-    showToast('璇峰厛濉啓 API Key', 'warning');
+    showToast('请先填写 API Key', 'warning');
     return;
   }
 
   try {
     const res = await fetch('/v1/models', { headers });
     if (res.status === 401) {
-      showToast('API Key 鏃犳晥鎴栨湭鎺堟潈', 'error');
+      showToast('API Key 无效或未授权', 'error');
       return;
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -731,13 +731,13 @@ async function refreshModels() {
     else if (currentTab === 'video') sel.value = 'grok-imagine-1.0-video';
     else sel.value = sel.value || 'grok-4-fast';
   } catch (e) {
-    showToast('鍔犺浇妯″瀷澶辫触: ' + (e?.message || e), 'error');
+    showToast('加载模型失败: ' + (e?.message || e), 'error');
   }
 }
 
 function saveApiKey() {
   const k = getUserApiKey();
-  if (!k) return showToast('璇疯緭鍏?API Key', 'warning');
+  if (!k) return showToast('请输入 API Key', 'warning');
   stopImageContinuous();
   localStorage.setItem(STORAGE_KEY, k);
   showToast('已保存', 'success');
@@ -795,18 +795,18 @@ async function uploadImages(files) {
 
 async function sendChat() {
   const prompt = String(q('chat-input').value || '').trim();
-  if (!prompt && !chatAttachments.length) return showToast('璇疯緭鍏ュ唴瀹规垨涓婁紶鍥剧墖', 'warning');
+  if (!prompt && !chatAttachments.length) return showToast('请输入内容或上传图片', 'warning');
 
   const model = String(q('model-select').value || '').trim();
   const stream = Boolean(q('stream-toggle').checked);
 
   const headers = { ...buildApiHeaders(), 'Content-Type': 'application/json' };
-  if (!headers.Authorization) return showToast('璇峰厛濉啓 API Key', 'warning');
+  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
 
   try {
     let imgUrls = [];
     if (chatAttachments.length) {
-      showToast('涓婁紶鍥剧墖涓?..', 'info');
+      showToast('上传图片中...', 'info');
       imgUrls = await uploadImages(chatAttachments.map((x) => x.file));
     }
 
@@ -816,7 +816,7 @@ async function sendChat() {
 
     chatMessages.push({ role: 'user', content: userContent });
 
-    showUserMsg('user', prompt || '[鍥剧墖]');
+    showUserMsg('user', prompt || '[图片]');
     q('chat-input').value = '';
     chatAttachments.forEach((a) => {
       try { URL.revokeObjectURL(a.previewUrl); } catch (e) {}
@@ -831,14 +831,14 @@ async function sendChat() {
       await streamChat(body, assistantBubble);
     } else {
       const res = await fetch('/v1/chat/completions', { method: 'POST', headers, body: JSON.stringify(body) });
-      if (res.status === 401) return showToast('API Key 鏃犳晥鎴栨湭鎺堟潈', 'error');
+      if (res.status === 401) return showToast('API Key 无效或未授权', 'error');
       const data = await res.json();
       const content = data?.choices?.[0]?.message?.content || '';
       chatMessages.push({ role: 'assistant', content });
       showUserMsg('assistant', content);
     }
   } catch (e) {
-    showToast('鍙戦€佸け璐? ' + (e?.message || e), 'error');
+    showToast('发送失败: ' + (e?.message || e), 'error');
   }
 }
 
@@ -889,7 +889,7 @@ function createImageCard(index) {
   card.className = 'result-card';
   card.dataset.index = String(index);
   card.innerHTML = `
-    <div class="result-placeholder">绛夊緟鐢熸垚...</div>
+    <div class="result-placeholder">等待生成...</div>
     <div class="result-progress"><div class="result-progress-bar"></div></div>
     <div class="result-meta"><span>#${index + 1}</span><span class="result-status">0%</span></div>
   `;
@@ -922,8 +922,8 @@ function updateImageCardCompleted(card, src, failed) {
 
   if (failed) {
     card.classList.add('is-error');
-    if (placeholder) placeholder.textContent = '鐢熸垚澶辫触';
-    if (status) status.textContent = '澶辫触';
+    if (placeholder) placeholder.textContent = '生成失败';
+    if (status) status.textContent = '失败';
     return;
   }
 
@@ -935,7 +935,7 @@ function updateImageCardCompleted(card, src, failed) {
   img.src = src;
   card.insertBefore(img, card.firstChild);
 
-  if (status) status.textContent = '瀹屾垚';
+  if (status) status.textContent = '完成';
 }
 
 function buildImageRequestConfig() {
@@ -1087,12 +1087,12 @@ async function generateImage() {
 
 async function generateVideo() {
   const prompt = String(q('video-prompt').value || '').trim();
-  if (!prompt) return showToast('璇疯緭鍏?prompt', 'warning');
+  if (!prompt) return showToast('请输入 prompt', 'warning');
 
   const model = String(q('model-select').value || 'grok-imagine-1.0-video').trim();
   const stream = Boolean(q('stream-toggle').checked);
   const headers = { ...buildApiHeaders(), 'Content-Type': 'application/json' };
-  if (!headers.Authorization) return showToast('璇峰厛濉啓 API Key', 'warning');
+  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
 
   const videoConfig = {
     aspect_ratio: String(q('video-aspect').value || '3:2'),
@@ -1104,7 +1104,7 @@ async function generateVideo() {
   try {
     let imgUrls = [];
     if (videoAttachments.length) {
-      showToast('涓婁紶鍥剧墖涓?..', 'info');
+      showToast('上传图片中...', 'info');
       imgUrls = await uploadImages(videoAttachments.slice(0, 1).map((x) => x.file));
     }
 
@@ -1135,7 +1135,7 @@ async function generateVideo() {
     videoAttachments = [];
     renderAttachments('video');
   } catch (e) {
-    showToast('鐢熸垚瑙嗛澶辫触: ' + (e?.message || e), 'error');
+    showToast('生成视频失败: ' + (e?.message || e), 'error');
   }
 }
 

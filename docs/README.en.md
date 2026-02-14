@@ -116,8 +116,8 @@ Pages:
 Auto register will:
 - Start a local Turnstile Solver first (default 5 threads), then run registration
 - Stop the solver automatically when the job finishes
-- After a successful sign-up, it will automatically: accept TOS + enable NSFW
-  - If TOS/NSFW fails, the registration attempt is marked as failed and the UI will show the reason
+- After a successful sign-up, it will automatically: accept TOS + set BirthDate + enable NSFW
+  - If any TOS/BirthDate/NSFW step fails, the registration attempt is marked as failed and the UI will show the reason
 
 Required config keys (Admin -> Config, `register.*`):
 - `register.worker_domain` / `register.email_domain` / `register.admin_password`: temp-mail Worker settings
@@ -313,7 +313,7 @@ When upgrading from older versions, the service will keep existing local data an
 
 - Legacy config: if `data/setting.toml` exists, it will be merged into `data/config.toml` (only fills missing keys or keys still set to defaults).
 - Legacy cache dir: old `data/temp/{image,video}` will be migrated to `data/tmp/{image,video}` so unexpired caches are not lost.
-- Legacy accounts (best-effort, one-time): after upgrade, existing tokens will automatically run a TOS + NSFW enablement pass once (concurrency 10) to keep old accounts compatible.
+- Legacy accounts (best-effort, one-time): after upgrade, existing tokens will automatically run a TOS + BirthDate + NSFW pass once (concurrency 10) to keep old accounts compatible.
 - Docker: make sure `./data:/app/data` (and `./logs:/app/logs`) are mounted persistently, otherwise container rebuilds will lose local data.
 
 | Module | Field | Key | Description | Default |
