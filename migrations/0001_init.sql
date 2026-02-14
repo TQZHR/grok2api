@@ -51,6 +51,11 @@ CREATE TABLE IF NOT EXISTS request_logs (
   status INTEGER NOT NULL,
   key_name TEXT NOT NULL,
   token_suffix TEXT NOT NULL,
+  total_tokens INTEGER NOT NULL DEFAULT 0,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+  cached_tokens INTEGER NOT NULL DEFAULT 0,
   error TEXT NOT NULL
 );
 

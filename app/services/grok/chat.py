@@ -532,7 +532,9 @@ class ChatService:
         
         # 处理响应
         if is_stream:
-            processor = StreamProcessor(model_name, token, think).process(response)
+            stream_processor = StreamProcessor(model_name, token, think)
+            processor = stream_processor.process(response)
+            prompt_messages = [msg.model_dump() for msg in messages]
 
             async def _wrapped_stream():
                 completed = False
@@ -544,8 +546,18 @@ class ChatService:
                     # Only count as "success" when the stream ends naturally.
                     try:
                         if completed:
+                            usage = stream_processor.build_usage(prompt_messages)
+                            raw = usage.get("_raw") or {}
                             await token_mgr.sync_usage(token, model_name, consume_on_fail=True, is_usage=True)
-                            await request_stats.record_request(model_name, success=True)
+                            await request_stats.record_request(
+                                model_name,
+                                success=True,
+                                total_tokens=int(usage.get("total_tokens", 0) or 0),
+                                input_tokens=int(usage.get("prompt_tokens", 0) or 0),
+                                output_tokens=int(usage.get("completion_tokens", 0) or 0),
+                                reasoning_tokens=int(raw.get("reasoning_tokens", 0) or 0),
+                                cached_tokens=int(raw.get("cached_tokens", 0) or 0),
+                            )
                         else:
                             await request_stats.record_request(model_name, success=False)
                     except Exception:
@@ -553,10 +565,23 @@ class ChatService:
 
             return _wrapped_stream()
 
-        result = await CollectProcessor(model_name, token).process(response)
+        result = await CollectProcessor(model_name, token).process(
+            response,
+            prompt_messages=[msg.model_dump() for msg in messages],
+        )
         try:
+            usage = result.get("usage") or {}
+            raw = usage.get("_raw") or {}
             await token_mgr.sync_usage(token, model_name, consume_on_fail=True, is_usage=True)
-            await request_stats.record_request(model_name, success=True)
+            await request_stats.record_request(
+                model_name,
+                success=True,
+                total_tokens=int(usage.get("total_tokens", 0) or 0),
+                input_tokens=int(usage.get("prompt_tokens", 0) or 0),
+                output_tokens=int(usage.get("completion_tokens", 0) or 0),
+                reasoning_tokens=int(raw.get("reasoning_tokens", 0) or 0),
+                cached_tokens=int(raw.get("cached_tokens", 0) or 0),
+            )
         except Exception:
             pass
         return result
