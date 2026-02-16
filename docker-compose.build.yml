@@ -1,0 +1,7 @@
+services:
+  grok2api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: grok2api:local
+

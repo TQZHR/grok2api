@@ -1,0 +1,161 @@
+:root {
+  --table-muted: rgba(0, 0, 0, 0.06);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: white;
+}
+
+.pill-muted {
+  background: rgba(0, 0, 0, 0.03);
+  color: var(--accents-5);
+}
+
+.mono {
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.btn-link {
+  color: var(--accents-5);
+  font-size: 12px;
+}
+
+.btn-link:hover {
+  color: black;
+}
+
+.stat-card-compact {
+  padding: 10px 12px;
+}
+
+.keys-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.keys-toolbar-left {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.keys-toolbar-left #keys-search {
+  width: 220px;
+}
+
+.keys-toolbar-left #keys-status-filter {
+  width: 140px;
+}
+
+.geist-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+}
+
+.geist-table th {
+  text-align: center;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--accents-1);
+  color: var(--accents-5);
+  font-weight: 500;
+  height: 40px;
+  background: #fff;
+}
+
+.geist-table th.text-left {
+  text-align: left;
+}
+
+.geist-table td {
+  padding: 8px 14px;
+  border-bottom: 1px solid #fafafa;
+  background: #fff;
+  vertical-align: middle;
+  min-height: 44px;
+  color: var(--accents-6);
+  text-align: center;
+  transition: background 0.15s;
+  font-size: 12px;
+}
+
+.geist-table td.text-left {
+  text-align: left;
+}
+
+.geist-table tr:last-child td {
+  border-bottom: none;
+}
+
+.geist-table tr:hover td {
+  background: #fafafa;
+}
+
+.checkbox {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  border: 1px solid var(--accents-3);
+  appearance: none;
+  cursor: pointer;
+  position: relative;
+  background: #fff;
+  transition: all 0.2s;
+}
+
+.checkbox:checked {
+  background-color: #000;
+  border-color: #000;
+}
+
+.checkbox:checked::after {
+  content: "";
+  position: absolute;
+  top: 45%;
+  left: 50%;
+  width: 3px;
+  height: 6px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: translate(-50%, -60%) rotate(45deg);
+}
+
+@media (max-width: 768px) {
+  .keys-page-header .geist-button {
+    width: 100%;
+  }
+
+  .keys-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .keys-toolbar-left {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .keys-toolbar-left #keys-search,
+  .keys-toolbar-left #keys-status-filter,
+  .keys-toolbar-left .geist-button-outline {
+    width: 100%;
+  }
+
+  .keys-toolbar-right {
+    text-align: right;
+  }
+}

@@ -43,7 +43,7 @@ function base64UrlDecode(input: string): string {
 
 function isAllowedUpstreamHost(hostname: string): boolean {
   const h = hostname.toLowerCase();
-  return h === "assets.grok.com" || h === "grok.com" || h.endsWith(".grok.com");
+  return h === "assets.grok.com" || h === "grok.com" || h.endsWith(".grok.com") || h.endsWith(".x.ai");
 }
 
 function isUuid(s: string): boolean {

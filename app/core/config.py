@@ -1,203 +1,329 @@
-"""配置管理器 - 管理应用配置的读写"""
+"""
+配置管理
 
-import toml
+- config.toml: 运行时配置
+- config.defaults.toml: 默认配置基线
+"""
+
+from copy import deepcopy
 from pathlib import Path
-from typing import Dict, Any, Optional, Literal
+from typing import Any, Dict
+import tomllib
+
+from app.core.logger import logger
+
+DEFAULT_CONFIG_FILE = Path(__file__).parent.parent.parent / "config.defaults.toml"
+LEGACY_CONFIG_FILE = Path(__file__).parent.parent.parent / "data" / "setting.toml"
 
 
-# 默认配置
-DEFAULT_GROK = {
-    "api_key": "",
-    "proxy_url": "",
-    "proxy_pool_url": "",
-    "proxy_pool_interval": 300,
-    "cache_proxy_url": "",
-    "cf_clearance": "",
-    "x_statsig_id": "",
-    "dynamic_statsig": True,
-    "filtered_tags": "xaiartifact,xai:tool_usage_card",
-    "show_thinking": True,
-    "temporary": False,
-    "max_upload_concurrency": 20,
-    "max_request_concurrency": 100,
-    "stream_first_response_timeout": 30,
-    "stream_chunk_timeout": 120,
-    "stream_total_timeout": 600,
-    "retry_status_codes": [401, 429],  # 可重试的HTTP状态码
-}
-
-DEFAULT_GLOBAL = {
-    "base_url": "http://localhost:8000",
-    "log_level": "INFO",
-    "image_mode": "url",
-    "admin_password": "admin",
-    "admin_username": "admin",
-    "image_cache_max_size_mb": 512,
-    "video_cache_max_size_mb": 1024,
-    "max_upload_concurrency": 20,  # 最大并发上传数
-    "max_request_concurrency": 50,  # 最大并发请求数
-    "batch_save_interval": 1.0,  # 批量保存间隔（秒）
-    "batch_save_threshold": 10  # 触发批量保存的变更数阈值
-}
+def _as_str(v: Any) -> str:
+    if isinstance(v, str):
+        return v
+    return ""
 
 
-class ConfigManager:
+def _as_int(v: Any) -> int | None:
+    try:
+        if v is None:
+            return None
+        return int(v)
+    except Exception:
+        return None
+
+
+def _as_bool(v: Any) -> bool | None:
+    if isinstance(v, bool):
+        return v
+    return None
+
+
+def _split_csv_tags(v: Any) -> list[str] | None:
+    if not isinstance(v, str):
+        return None
+    parts = [x.strip() for x in v.split(",")]
+    tags = [x for x in parts if x]
+    return tags or None
+
+
+def _legacy_setting_to_config(legacy: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Migrate legacy `data/setting.toml` format (grok/global) to the new config schema.
+
+    Best-effort mapping only for stable fields. It does not delete or rename the legacy file.
+    """
+
+    grok = legacy.get("grok") if isinstance(legacy.get("grok"), dict) else {}
+    global_ = legacy.get("global") if isinstance(legacy.get("global"), dict) else {}
+
+    out: Dict[str, Any] = {}
+
+    # === app ===
+    app_url = _as_str(global_.get("base_url")).strip()
+    admin_username = _as_str(global_.get("admin_username")).strip()
+    app_key = _as_str(global_.get("admin_password")).strip()
+    api_key = _as_str(grok.get("api_key")).strip()
+    image_format = _as_str(global_.get("image_mode")).strip()
+
+    if app_url or admin_username or app_key or api_key or image_format:
+        out["app"] = {}
+        if app_url:
+            out["app"]["app_url"] = app_url
+        if admin_username:
+            out["app"]["admin_username"] = admin_username
+        if app_key:
+            out["app"]["app_key"] = app_key
+        if api_key:
+            out["app"]["api_key"] = api_key
+        if image_format:
+            out["app"]["image_format"] = image_format
+
+    # === grok ===
+    base_proxy_url = _as_str(grok.get("proxy_url")).strip()
+    asset_proxy_url = _as_str(grok.get("cache_proxy_url")).strip()
+    cf_clearance = _as_str(grok.get("cf_clearance")).strip()
+
+    temporary = _as_bool(grok.get("temporary"))
+    thinking = _as_bool(grok.get("show_thinking"))
+    dynamic_statsig = _as_bool(grok.get("dynamic_statsig"))
+    filter_tags = _split_csv_tags(grok.get("filtered_tags"))
+
+    retry_status_codes = grok.get("retry_status_codes")
+
+    timeout = None
+    total_timeout = _as_int(grok.get("stream_total_timeout"))
+    if total_timeout and total_timeout > 0:
+        timeout = total_timeout
+    else:
+        chunk_timeout = _as_int(grok.get("stream_chunk_timeout"))
+        if chunk_timeout and chunk_timeout > 0:
+            timeout = chunk_timeout
+
+    if (
+        base_proxy_url
+        or asset_proxy_url
+        or cf_clearance
+        or temporary is not None
+        or thinking is not None
+        or dynamic_statsig is not None
+        or filter_tags is not None
+        or timeout is not None
+        or isinstance(retry_status_codes, list)
+    ):
+        out["grok"] = {}
+        if base_proxy_url:
+            out["grok"]["base_proxy_url"] = base_proxy_url
+        if asset_proxy_url:
+            out["grok"]["asset_proxy_url"] = asset_proxy_url
+        if cf_clearance:
+            out["grok"]["cf_clearance"] = cf_clearance
+        if temporary is not None:
+            out["grok"]["temporary"] = temporary
+        if thinking is not None:
+            out["grok"]["thinking"] = thinking
+        if dynamic_statsig is not None:
+            out["grok"]["dynamic_statsig"] = dynamic_statsig
+        if filter_tags is not None:
+            out["grok"]["filter_tags"] = filter_tags
+        if timeout is not None:
+            out["grok"]["timeout"] = timeout
+        if isinstance(retry_status_codes, list) and retry_status_codes:
+            out["grok"]["retry_status_codes"] = retry_status_codes
+
+    # === cache ===
+    # Legacy had separate limits; new uses a single total limit_mb.
+    image_mb = _as_int(global_.get("image_cache_max_size_mb")) or 0
+    video_mb = _as_int(global_.get("video_cache_max_size_mb")) or 0
+    if image_mb > 0 or video_mb > 0:
+        out["cache"] = {"limit_mb": max(1, image_mb + video_mb)}
+
+    return out
+
+
+def _apply_legacy_config(
+    config_data: Dict[str, Any],
+    legacy_cfg: Dict[str, Any],
+    defaults: Dict[str, Any],
+) -> bool:
+    """
+    Merge legacy settings into current config:
+    - fill missing keys
+    - override keys that are still default values
+    """
+
+    changed = False
+    for section, items in legacy_cfg.items():
+        if not isinstance(items, dict):
+            continue
+
+        current_section = config_data.get(section)
+        if not isinstance(current_section, dict):
+            current_section = {}
+            config_data[section] = current_section
+            changed = True
+
+        default_section = defaults.get(section) if isinstance(defaults.get(section), dict) else {}
+
+        for key, val in items.items():
+            if val is None:
+                continue
+            if key not in current_section:
+                current_section[key] = val
+                changed = True
+                continue
+
+            default_val = default_section.get(key) if isinstance(default_section, dict) else None
+            current_val = current_section.get(key)
+
+            # NOTE: The admin panel password default used to be `grok2api` in older versions.
+            # Treat it as "still default" so legacy `data/setting.toml` can override it during migration.
+            is_effective_default = current_val == default_val
+            if section == "app" and key == "app_key" and current_val == "grok2api":
+                is_effective_default = True
+
+            if is_effective_default and val != default_val:
+                current_section[key] = val
+                changed = True
+
+    return changed
+
+
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """深度合并字典：override 覆盖 base。"""
+    if not isinstance(base, dict):
+        return deepcopy(override) if isinstance(override, dict) else deepcopy(base)
+
+    result = deepcopy(base)
+    if not isinstance(override, dict):
+        return result
+
+    for key, val in override.items():
+        if isinstance(val, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge(result[key], val)
+        else:
+            result[key] = val
+    return result
+
+
+def _load_defaults() -> Dict[str, Any]:
+    """加载默认配置文件"""
+    if not DEFAULT_CONFIG_FILE.exists():
+        return {}
+    try:
+        with DEFAULT_CONFIG_FILE.open("rb") as f:
+            return tomllib.load(f)
+    except Exception as e:
+        logger.warning(f"Failed to load defaults from {DEFAULT_CONFIG_FILE}: {e}")
+        return {}
+
+
+class Config:
     """配置管理器"""
 
-    def __init__(self) -> None:
-        """初始化配置"""
-        self.config_path: Path = Path(__file__).parents[2] / "data" / "setting.toml"
-        self._storage: Optional[Any] = None
-        self._ensure_exists()
-        self.global_config: Dict[str, Any] = self.load("global")
-        self.grok_config: Dict[str, Any] = self.load("grok")
-    
-    def _ensure_exists(self) -> None:
-        """确保配置存在"""
-        if not self.config_path.exists():
-            self.config_path.parent.mkdir(parents=True, exist_ok=True)
-            self._create_default()
-    
-    def _create_default(self) -> None:
-        """创建默认配置"""
-        default = {"grok": DEFAULT_GROK.copy(), "global": DEFAULT_GLOBAL.copy()}
-        with open(self.config_path, "w", encoding="utf-8") as f:
-            toml.dump(default, f)
-    
-    def _normalize_proxy(self, proxy: str) -> str:
-        """标准化代理URL（sock5/socks5 → socks5h://）"""
-        if not proxy:
-            return proxy
+    _instance = None
+    _config = {}
 
-        proxy = proxy.strip()
-        if proxy.startswith("sock5h://"):
-            proxy = proxy.replace("sock5h://", "socks5h://", 1)
-        if proxy.startswith("sock5://"):
-            proxy = proxy.replace("sock5://", "socks5://", 1)
-        if proxy.startswith("socks5://"):
-            return proxy.replace("socks5://", "socks5h://", 1)
-        return proxy
-    
-    def _normalize_cf(self, cf: str) -> str:
-        """标准化CF Clearance（自动添加前缀）"""
-        if cf and not cf.startswith("cf_clearance="):
-            return f"cf_clearance={cf}"
-        return cf
+    def __init__(self):
+        self._config = {}
+        self._defaults = {}
+        self._defaults_loaded = False
 
-    def set_storage(self, storage: Any) -> None:
-        """设置存储实例"""
-        self._storage = storage
+    def _ensure_defaults(self):
+        if self._defaults_loaded:
+            return
+        self._defaults = _load_defaults()
+        self._defaults_loaded = True
 
-    def load(self, section: Literal["global", "grok"]) -> Dict[str, Any]:
-        """加载配置节"""
+    async def load(self):
+        """显式加载配置"""
         try:
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                config = toml.load(f)[section]
+            from app.core.storage import get_storage, LocalStorage
 
-            # 标准化Grok配置
-            if section == "grok":
-                if "proxy_url" in config:
-                    config["proxy_url"] = self._normalize_proxy(config["proxy_url"])
-                if "cache_proxy_url" in config:
-                    config["cache_proxy_url"] = self._normalize_proxy(config["cache_proxy_url"])
-                if "cf_clearance" in config:
-                    config["cf_clearance"] = self._normalize_cf(config["cf_clearance"])
+            self._ensure_defaults()
 
-            return config
+            storage = get_storage()
+            config_data = await storage.load_config()
+            from_remote = True
+
+            # 从本地 data/config.toml 初始化后端
+            if config_data is None:
+                local_storage = LocalStorage()
+                from_remote = False
+                try:
+                    config_data = await local_storage.load_config()
+                except Exception as e:
+                    logger.info(f"Failed to auto-init config from local: {e}")
+                    config_data = {}
+
+            config_data = config_data or {}
+            before_legacy = deepcopy(config_data)
+
+            # Legacy migration: data/setting.toml -> config schema
+            if LEGACY_CONFIG_FILE.exists():
+                try:
+                    with LEGACY_CONFIG_FILE.open("rb") as f:
+                        legacy_raw = tomllib.load(f) or {}
+                    legacy_cfg = _legacy_setting_to_config(legacy_raw)
+                    if legacy_cfg and _apply_legacy_config(config_data, legacy_cfg, self._defaults):
+                        logger.info(
+                            "Detected legacy data/setting.toml, migrated into config (missing/default keys)."
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to migrate legacy config from {LEGACY_CONFIG_FILE}: {e}")
+
+            merged = _deep_merge(self._defaults, config_data)
+
+            # 自动回填缺失配置到存储
+            should_persist = (not from_remote) or (merged != before_legacy)
+            if should_persist:
+                async with storage.acquire_lock("config_save", timeout=10):
+                    await storage.save_config(merged)
+                if not from_remote:
+                    logger.info(
+                        f"Initialized remote storage ({storage.__class__.__name__}) with config baseline."
+                    )
+
+            self._config = merged
         except Exception as e:
-            raise Exception(f"[Setting] 配置加载失败: {e}") from e
-    
-    async def reload(self) -> None:
-        """重新加载配置"""
-        self.global_config = self.load("global")
-        self.grok_config = self.load("grok")
-    
-    async def _save_file(self, updates: Dict[str, Dict[str, Any]]) -> None:
-        """保存到文件"""
-        import aiofiles
-        
-        async with aiofiles.open(self.config_path, "r", encoding="utf-8") as f:
-            config = toml.loads(await f.read())
-        
-        for section, data in updates.items():
-            if section in config:
-                config[section].update(data)
-        
-        async with aiofiles.open(self.config_path, "w", encoding="utf-8") as f:
-            await f.write(toml.dumps(config))
-    
-    async def _save_storage(self, updates: Dict[str, Dict[str, Any]]) -> None:
-        """保存到存储"""
-        config = await self._storage.load_config()
-        
-        for section, data in updates.items():
-            if section in config:
-                config[section].update(data)
-        
-        await self._storage.save_config(config)
-    
-    def _prepare_grok(self, grok: Dict[str, Any]) -> Dict[str, Any]:
-        """准备Grok配置（移除前缀）"""
-        processed = grok.copy()
-        if "cf_clearance" in processed:
-            cf = processed["cf_clearance"]
-            if cf and cf.startswith("cf_clearance="):
-                processed["cf_clearance"] = cf.replace("cf_clearance=", "", 1)
-        return processed
+            logger.error(f"Error loading config: {e}")
+            self._config = {}
 
-    async def save(self, global_config: Optional[Dict[str, Any]] = None, grok_config: Optional[Dict[str, Any]] = None) -> None:
-        """保存配置"""
-        updates = {}
-        
-        if global_config:
-            updates["global"] = global_config
-        if grok_config:
-            updates["grok"] = self._prepare_grok(grok_config)
-        
-        # 选择存储方式
-        if self._storage:
-            await self._save_storage(updates)
-        else:
-            await self._save_file(updates)
-        
-        await self.reload()
-    
-    async def get_proxy_async(self, proxy_type: Literal["service", "cache"] = "service") -> str:
-        """异步获取代理URL（支持代理池）
-        
-        Args:
-            proxy_type: 代理类型
-                - service: 服务代理（client/upload）
-                - cache: 缓存代理（cache）
+    def get(self, key: str, default: Any = None) -> Any:
         """
-        from app.core.proxy_pool import proxy_pool
-        
-        if proxy_type == "cache":
-            cache_proxy = self.grok_config.get("cache_proxy_url", "")
-            if cache_proxy:
-                return cache_proxy
-        
-        # 从代理池获取
-        return await proxy_pool.get_proxy() or ""
-    
-    def get_proxy(self, proxy_type: Literal["service", "cache"] = "service") -> str:
-        """获取代理URL（同步方法，用于向后兼容）
-        
+        获取配置值
+
         Args:
-            proxy_type: 代理类型
-                - service: 服务代理（client/upload）
-                - cache: 缓存代理（cache）
+            key: 配置键，格式 "section.key"
+            default: 默认值
         """
-        from app.core.proxy_pool import proxy_pool
-        
-        if proxy_type == "cache":
-            cache_proxy = self.grok_config.get("cache_proxy_url", "")
-            if cache_proxy:
-                return cache_proxy
-        
-        # 返回当前代理（如果是代理池，返回最后一次获取的）
-        return proxy_pool.get_current_proxy() or self.grok_config.get("proxy_url", "")
+        if "." in key:
+            try:
+                section, attr = key.split(".", 1)
+                return self._config.get(section, {}).get(attr, default)
+            except (ValueError, AttributeError):
+                return default
+
+        return self._config.get(key, default)
+
+    async def update(self, new_config: dict):
+        """更新配置"""
+        from app.core.storage import get_storage
+
+        storage = get_storage()
+        async with storage.acquire_lock("config_save", timeout=10):
+            self._ensure_defaults()
+            base = _deep_merge(self._defaults, self._config or {})
+            merged = _deep_merge(base, new_config or {})
+            await storage.save_config(merged)
+            self._config = merged
 
 
-# 全局实例
-setting = ConfigManager()
+# 全局配置实例
+config = Config()
+
+
+def get_config(key: str, default: Any = None) -> Any:
+    """获取配置"""
+    return config.get(key, default)
+
+
+__all__ = ["Config", "config", "get_config"]

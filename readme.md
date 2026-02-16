@@ -1,267 +1,413 @@
 # Grok2API
 
-## Cloudflare Workers / Pages 部署
+本项目为对 [chenyme/grok2api](https://github.com/chenyme/grok2api) 的二次修改与增强。
 
-### 一键部署（GitHub Actions，推荐）
+**中文** | [English](docs/README.en.md)
 
-只需要在 GitHub 仓库配置 2 个 Secrets，即可一键部署到 Cloudflare Workers（并自动创建/绑定 D1 + KV）：
+> [!NOTE]
+> 本项目仅供学习与研究，使用者必须在遵循 Grok 的 **使用条款** 以及 **法律法规** 的情况下使用，不得用于非法用途。
 
-1. Fork 本仓库
-2. GitHub → Settings → Secrets and variables → Actions 添加：
-   - `CLOUDFLARE_API_TOKEN`
-   - `CLOUDFLARE_ACCOUNT_ID`
-3. push 到 `main`（或在 Actions 页面手动运行 `Deploy to Cloudflare Workers` 工作流）
+基于 **FastAPI** 重构的 Grok2API，全面适配最新 Web 调用格式，支持流/非流式对话、图像生成/编辑、深度思考，号池并发与自动负载均衡一体化。
 
-工作流会自动：
-- 创建/复用 D1 数据库（名称取自 `wrangler.toml` 的 `database_name`）
-- 创建/复用 KV Namespace（名称默认为 `<worker_name>-cache`，即 `grok2api-cache`）
-- 生成 `wrangler.ci.toml` 并执行 D1 migrations + 部署 Worker
+<img width="1941" height="1403" alt="screenshot" src="docs/assets/screenshot-2026-02-05-064737.png" />
 
-### 手动部署
-
-手动部署与更完整的说明请查看：`README.cloudflare.md`
-
-基于 **FastAPI** 重构的 Grok2API，全面适配最新 Web 调用格式，支持流式对话、图像生成、图像编辑、联网搜索、深度思考，号池并发与自动负载均衡一体化。
-
-## 🆕 Fork 增强功能
-
-本 Fork 在原版基础上新增以下功能：
-
-- **多 Key 管理与持久化**：支持管理员批量创建、备注、删除 API Key，支持多选批量操作。所有密钥均实现持久化存储，重启不丢失。
-- **日志审计支持**：实时记录请求细节，且日志数据支持文件持久化存储。
-- **并发性能优化 (Critical)**：重构了底层的 Grok 请求和响应处理逻辑。采用全异步流式迭代 (`aiter_lines`)，彻底解决了在消息生成过程中后台管理面板“卡死”或响应缓慢的问题。
-- **Token 智能冷却**：请求失败后自动冷却，避免连续使用故障 Token
-  - 普通错误：冷却 5 次请求
-  - 429 限流 + 有额度：冷却 1 小时
-  - 429 限流 + 无额度：冷却 10 小时
-- **一键刷新所有 Token**：后台按钮批量刷新剩余次数，带实时进度显示
-- **并发保护**：刷新任务进行中自动拒绝重复请求
-- **请求统计与持久化**：按小时/天统计请求趋势，包含成功率和模型分布图表，统计数据支持持久化。
-- **缓存预览**：后台添加缓存预览板块，可查看缓存的图片/视频
 <br>
+
+## Cloudflare Workers / Pages（Fork 增强）
+
+本仓库额外提供 Cloudflare Workers / Pages（TypeScript，D1 + KV）版本，适合在 Cloudflare 上运行与代理出站。
+
+- 部署与配置说明：`README.cloudflare.md`
+- 一键部署工作流：`.github/workflows/cloudflare-workers.yml`
+  - 一键部署前置条件：仓库需配置 `CLOUDFLARE_API_TOKEN` 与 `CLOUDFLARE_ACCOUNT_ID`。
 
 ## 使用说明
 
-### 调用次数与配额
+### 如何启动
 
-- **普通账号（Basic）**：免费使用 **80 次 / 20 小时**
-- **Super 账号**：配额待定（作者未测）
-- 系统自动负载均衡各账号调用次数，可在**管理页面**实时查看用量与状态
-
-### 图像生成功能
-
-- 在对话内容中输入如“给我画一个月亮”自动触发图片生成
-- 每次以 **Markdown 格式返回两张图片**，共消耗 4 次额度
-- **注意：Grok 的图片直链受 403 限制，系统自动缓存图片到本地。必须正确设置 `Base Url` 以确保图片能正常显示！**
-
-### 视频生成功能
-- 选择 `grok-imagine-0.9` 模型，传入图片和提示词即可（方式和 OpenAI 的图片分析调用格式一致）
-- 返回格式为 `<video src="{full_video_url}" controls="controls"></video>`
-- **注意：Grok 的视频直链受 403 限制，系统自动缓存图片到本地。必须正确设置 `Base Url` 以确保视频能正常显示！**
+- 本地开发
 
 ```
-curl https://你的服务器地址/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $GROK2API_API_KEY" \
-  -d '{
-    "model": "grok-imagine-0.9",
-    "messages": [
-      {
-        "role": "user",
-        "content": [
-          {
-            "type": "text",
-            "text": "让太阳升起来"
-          },
-          {
-            "type": "image_url",
-            "image_url": {
-              "url": "https://your-image.jpg"
-            }
-          }
-        ]
-      }
-    ]
-  }'
-```
-
-### 关于 `x_statsig_id`
-
-- `x_statsig_id` 是 Grok 用于反机器人的 Token，有逆向资料可参考
-- **建议新手勿修改配置，保留默认值即可**
-- 尝试用 Camoufox 绕过 403 自动获 id，但 grok 现已限制非登陆的`x_statsig_id`，故弃用，采用固定值以兼容所有请求
-
-<br>
-
-## 如何部署
-
-### 方式一：Docker Compose（推荐）
-
-由于本项目包含修改，建议直接构建运行：
-
-1. 克隆本仓库
-```bash
-git clone https://github.com/Tomiya233/grok2api.git
-cd grok2api
-```
-
-2. 启动服务
-```bash
-docker-compose up -d --build
-```
-
-**docker-compose.yml 参考：**
-```yaml
-services:
-  grok2api:
-    build: .
-    image: grok2api:latest
-    container_name: grok2api
-    restart: always
-    ports:
-      - "8000:8000"
-    volumes:
-      - grok_data:/app/data
-      - ./logs:/app/logs
-    environment:
-      - LOG_LEVEL=INFO
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-volumes:
-  grok_data:
-```
-
-### 方式二：Python 直接运行
-
-**前置要求**：Python 3.10+，建议使用 `uv` 包管理器
-
-1. 安装 uv
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-2. 运行服务
-```bash
-# 安装依赖并运行
 uv sync
-uv run python main.py
+
+uv run main.py
+
+# （可选）启动后自检
+python scripts/smoke_test.py --base-url http://127.0.0.1:8000
 ```
 
-服务默认运行在 `http://127.0.0.1:8000`
+- 项目部署
 
-### 环境变量说明
+```
+git clone https://github.com/TQZHR/grok2api.git
 
-| 环境变量      | 必填 | 说明                                    | 示例 |
-|---------------|------|-----------------------------------------|------|
-| STORAGE_MODE  | 否   | 存储模式：file/mysql/redis               | file |
-| DATABASE_URL  | 否   | 数据库连接URL（MySQL/Redis模式时必需）   | mysql://user:pass@host:3306/db |
+# 进入项目目录
+cd grok2api
 
-**存储模式：**
-- `file`: 本地文件存储（默认）
-- `mysql`: MySQL数据库存储，需设置DATABASE_URL
-- `redis`: Redis缓存存储，需设置DATABASE_URL
+# 直接拉取镜像启动（默认）
+docker compose up -d
+
+# 更新到最新镜像
+docker compose pull
+docker compose up -d
+
+# 从当前仓库源码构建并启动（可选）
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+
+# （可选）启动后自检
+python scripts/smoke_test.py --base-url http://127.0.0.1:8000
+```
+
+> 如果拉取镜像时报 `denied`：说明 GHCR 镜像不可匿名拉取（未公开或需要登录）。你可以先执行 `docker login ghcr.io`，或在 `.env` 里设置 `GROK2API_IMAGE` 指向你自己的公开镜像；也可以用上面的 `--build` 从源码构建运行。
+
+> 可选：复制 `.env.example` 为 `.env`，可配置端口/日志/存储等；并可通过 `COMPOSE_PROFILES` 一键启用 `redis/pgsql/mysql`（见 `.env.example` 内示例）。
+
+> 部署一致性说明：本地（FastAPI）/ Docker / Cloudflare Workers 共用同一套管理功能语义（Token 筛选、API Key 管理、后台管理接口语义一致）。
+> Cloudflare 可通过 `.github/workflows/cloudflare-workers.yml` 一键部署（需先配置上述两个 Secrets），Docker 仍保持 `docker compose up -d` 一键启动。
+
+### 管理面板
+
+访问地址：`http://<host>:8000/login`
+
+默认账号密码：`admin` / `admin`（对应配置项 `app.admin_username` / `app.app_key`，建议上线后修改）。
+
+常用页面：
+- `http://<host>:8000/admin/token`：Token 管理（导入/导出/批量操作/自动注册）
+- `http://<host>:8000/admin/keys`：API Key 管理（统计/筛选/新增/编辑/删除）
+- `http://<host>:8000/admin/datacenter`：数据中心（常用指标 + 日志查看）
+- `http://<host>:8000/admin/config`：配置管理（含自动注册所需配置）
+- `http://<host>:8000/admin/cache`：缓存管理（本地缓存 + 在线资产）
+
+### 手机端适配（全站）
+
+- 已覆盖页面：`/login`、`/admin/token`、`/admin/keys`、`/admin/cache`、`/admin/config`、`/admin/datacenter`、`/chat`、`/admin/chat`。
+- 后台顶部导航在手机端改为抽屉菜单（支持：打开/关闭、点击遮罩关闭、点击菜单项后自动收起、`Esc` 关闭）。
+- 表格在手机端保持“横向滚动优先”，不压缩列结构（Token/API Key/缓存表格行为一致）。
+- Toast 在窄屏改为左右边距自适应，不再固定最小宽度导致溢出。
+- 底部批量操作条（Token/缓存）在手机端改为全宽底部卡片样式，减少遮挡主操作。
+- 三部署一致性：上述适配使用同一套静态资源，在本地 FastAPI / Docker / Cloudflare Workers 下行为一致。
+
+### Token 管理增强（筛选 + 状态判定）
+
+- 支持类型筛选：`sso`、`supersso`（可组合）。
+- 支持状态筛选：`活跃`、`失效`、`额度用尽`（可组合，按并集语义）。
+- 提供“结果计数”和“清空筛选”。
+- 筛选后勾选/全选/批量刷新/批量删除均基于 Token 唯一值，避免过滤后行索引错位导致误操作。
+- 状态判定规则：
+  - `失效`：`status` 为 `invalid/expired/disabled`
+  - `额度用尽`：`status = cooling`，或（`quota_known = true` 且 `quota <= 0`），或（super 且 `heavy_quota_known = true` 且 `heavy_quota <= 0`）
+  - `活跃`：非失效且非额度用尽
+- 类型映射规则：`ssoBasic -> sso`，`ssoSuper -> supersso`（接口字段 `token_type` 为 `sso` / `ssoSuper`）。
+
+### API Key 管理增强
+
+- 页面新增统计卡片：总数、启用、禁用、今日额度用尽。
+- 工具栏支持：名称/Key 搜索、状态筛选（全部/启用/禁用/额度用尽）、重置筛选。
+- 新增 API Key 弹窗增强：
+  - 居中悬浮弹窗（遮罩层 + 缩放入场动画）
+  - 支持点击遮罩关闭、`Esc` 关闭
+  - 移动端弹窗内容可滚动且网格布局自适应
+  - 自动生成 Key
+  - 额度预设（推荐/不限）
+  - 提交中禁用按钮，防止重复提交
+  - 创建成功后支持一键复制 Key
+- 错误提示优化：前端优先展示后端 `detail/error/message`，避免“创建失败/更新失败”无上下文。
+- 更新不存在的 Key 会返回 `404`（FastAPI 与 Workers 一致）。
+
+### 自动注册（Token 管理 -> 添加 -> 自动注册）
+
+支持两种方式：
+- 直接添加 Token（手动/批量导入）
+- 自动注册并自动写入 Token 池
+
+自动注册特性：
+- 可设置注册数量（不填默认 `100`）
+- 可设置并发（默认 `10`）
+- 注册前会自动启动本地 Turnstile Solver（默认 5 线程），注册结束后自动关闭
+- 注册成功后会自动执行：同意用户协议（TOS）+ 设置年龄 + 开启 NSFW
+  - 若 TOS / 年龄 / NSFW 任一步骤失败，会判定该次注册失败并在前端显示错误原因
+
+自动注册前置配置（在「配置管理」-> `register.*`）：
+- `register.worker_domain` / `register.email_domain` / `register.admin_password`：临时邮箱 Worker 配置
+- `register.solver_url` / `register.solver_browser_type` / `register.solver_threads`：本地 Turnstile Solver 配置
+- 可选：`register.yescaptcha_key`（配置后优先走 YesCaptcha，无需本地 solver）
+
+升级兼容：
+- 本地部署升级后会自动对「旧 Token」做一次 TOS + 设置年龄 + NSFW（并发 10，best-effort，仅执行一次，避免重复刷）。
+
+### 环境变量
+
+> 配置 `.env` 文件
+
+| 变量名                  | 说明                                                | 默认值      | 示例                                                |
+| :---------------------- | :-------------------------------------------------- | :---------- | :-------------------------------------------------- |
+| `LOG_LEVEL`           | 日志级别                                            | `INFO`    | `DEBUG`                                           |
+| `SERVER_HOST`         | 服务监听地址                                        | `0.0.0.0` | `0.0.0.0`                                         |
+| `SERVER_PORT`         | 服务端口                                            | `8000`    | `8000`                                            |
+| `SERVER_WORKERS`      | Uvicorn worker 数量                                 | `1`       | `2`                                               |
+| `SERVER_STORAGE_TYPE` | 存储类型（`local`/`redis`/`mysql`/`pgsql`） | `local`   | `pgsql`                                           |
+| `SERVER_STORAGE_URL`  | 存储连接串（local 时可为空）                        | `""`      | `postgresql+asyncpg://user:password@host:5432/db` |
+
+### 配置文件与升级迁移
+
+- 配置文件：`data/config.toml`（首次启动会基于 `config.defaults.toml` 自动生成；管理面板也可直接修改）
+- Token 数据：`data/token.json`
+- 升级时自动兼容迁移（本地/Docker）：
+  - 旧版配置：检测到 `data/setting.toml` 时，会按“缺失字段/仍为默认值”的策略合并到新配置
+  - 旧版缓存目录：`data/temp/{image,video}` -> `data/tmp/{image,video}`
+  - 旧账号一次性修复（best-effort）：升级后会对现有 Token 自动执行一次「同意用户协议 + 设置年龄 + 开启 NSFW」（并发 10）
+
+
+### 可用次数
+
+- Basic 账号：80 次 / 20h
+- Super 账号：无账号，作者未测试
+
+### 可用模型
+
+| 模型名                     | 计次 | 可用账号    | 对话功能 | 图像功能 | 视频功能 |
+| :------------------------- | :--: | :---------- | :------: | :------: | :------: |
+| `grok-3`                 |  1  | Basic/Super |   支持   |   支持   |    -    |
+| `grok-3-fast`            |  1  | Basic/Super |   支持   |   支持   |    -    |
+| `grok-4`                 |  1  | Basic/Super |   支持   |   支持   |    -    |
+| `grok-4-mini`            |  1  | Basic/Super |   支持   |   支持   |    -    |
+| `grok-4-fast`            |  1  | Basic/Super |   支持   |   支持   |    -    |
+| `grok-4-heavy`           |  4  | Super       |   支持   |   支持   |    -    |
+| `grok-4.1`               |  1  | Basic/Super |   支持   |   支持   |    -    |
+| `grok-4.1-thinking`      |  4  | Basic/Super |   支持   |   支持   |    -    |
+| `grok-imagine-1.0`       |  4  | Basic/Super |    -    |   支持   |    -    |
+| `grok-imagine-1.0-edit`  |  4  | Basic/Super |    -    |   支持   |    -    |
+| `grok-imagine-1.0-video` |  -  | Basic/Super |    -    |    -    |   支持   |
 
 <br>
 
 ## 接口说明
 
-> 与 OpenAI 官方接口完全兼容，API 请求需通过 **Authorization header** 认证
+### `POST /v1/chat/completions`
 
-| 方法  | 端点                         | 描述                               | 是否需要认证 |
-|-------|------------------------------|------------------------------------|------|
-| POST  | `/v1/chat/completions`       | 创建聊天对话（流式/非流式）         | ✅   |
-| GET   | `/v1/models`                 | 获取全部支持模型                   | ✅   |
-| GET   | `/images/{img_path}`         | 获取生成图片文件                   | ❌   |
+> 通用接口，支持对话聊天、图像生成、图像编辑、视频生成、视频超分
+
+```bash
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $GROK2API_API_KEY" \
+  -d '{
+    "model": "grok-4",
+    "messages": [{"role":"user","content":"你好"}]
+  }'
+```
+
+<details>
+<summary>支持的请求参数</summary>
 
 <br>
 
-<details>
-<summary>管理与统计接口（展开查看更多）</summary>
+| 字段                 | 类型    | 说明                           | 可用参数                                           |
+| :------------------- | :------ | :----------------------------- | :------------------------------------------------- |
+| `model`            | string  | 模型名称                       | -                                                  |
+| `messages`         | array   | 消息列表                       | `developer`, `system`, `user`, `assistant` |
+| `stream`           | boolean | 是否开启流式输出               | `true`, `false`                                |
+| `thinking`         | string  | 思维链模式                     | `enabled`, `disabled`, `null`                |
+| `video_config`     | object  | **视频模型专用配置对象** | -                                                  |
+| └─`aspect_ratio` | string  | 视频宽高比                     | `16:9`, `9:16`, `1:1`, `2:3`, `3:2`      |
+| └─`video_length` | integer | 视频时长 (秒)                  | `5` - `15`                                     |
+| └─`resolution`   | string  | 分辨率                         | `SD`, `HD`                                     |
+| └─`preset`       | string  | 风格预设                       | `fun`, `normal`, `spicy`                     |
 
-| 方法  | 端点                    | 描述               | 认证 |
-|-------|-------------------------|--------------------|------|
-| GET   | /login                  | 管理员登录页面     | ❌   |
-| GET   | /manage                 | 管理控制台页面     | ❌   |
-| POST  | /api/login              | 管理员登录认证     | ❌   |
-| POST  | /api/logout             | 管理员登出         | ✅   |
-| GET   | /api/tokens             | 获取 Token 列表    | ✅   |
-| POST  | /api/tokens/add         | 批量添加 Token     | ✅   |
-| POST  | /api/tokens/delete      | 批量删除 Token     | ✅   |
-| GET   | /api/settings           | 获取系统配置       | ✅   |
-| POST  | /api/settings           | 更新系统配置       | ✅   |
-| GET   | /api/cache/size         | 获取缓存大小       | ✅   |
-| POST  | /api/cache/clear        | 清理所有缓存       | ✅   |
-| POST  | /api/cache/clear/images | 清理图片缓存       | ✅   |
-| POST  | /api/cache/clear/videos | 清理视频缓存       | ✅   |
-| GET   | /api/stats              | 获取统计信息       | ✅   |
-| POST  | /api/tokens/tags        | 更新 Token 标签     | ✅   |
-| POST  | /api/tokens/note        | 更新 Token 备注     | ✅   |
-| POST  | /api/tokens/test        | 测试 Token 可用性   | ✅   |
-| GET   | /api/tokens/tags/all    | 获取所有标签列表    | ✅   |
-| GET   | /api/storage/mode       | 获取存储模式信息    | ✅   |
-| POST  | /api/tokens/refresh-all | 一键刷新所有Token   | ✅   |
-| GET   | /api/tokens/refresh-progress | 获取刷新进度       | ✅   |
-| GET   | /api/keys               | 获取 API Key 列表  | ✅   |
-| POST  | /api/keys/add           | 创建新 API Key     | ✅   |
-| POST  | /api/keys/delete        | 删除 API Key       | ✅   |
-| POST  | /api/keys/status        | 切换 Key 启用状态  | ✅   |
-| POST  | /api/keys/name          | 修改 Key 备注名称  | ✅   |
-| GET   | /api/logs               | 获取请求日志(1000条)| ✅   |
-| POST  | /api/logs/clear         | 清空所有审计日志   | ✅   |
+注：除上述外的其他参数将自动丢弃并忽略
+
+<br>
+
+</details>
+
+### `POST /v1/images/generations`
+
+> 图像生成接口
+
+```bash
+curl http://localhost:8000/v1/images/generations \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $GROK2API_API_KEY" \
+  -d '{
+    "model": "grok-imagine-1.0",
+    "prompt": "一只在太空漂浮的猫",
+    "n": 1
+  }'
+```
+
+<details>
+<summary>支持的请求参数</summary>
+
+<br>
+
+| 字段 | 类型 | 说明 | 可用参数 |
+| :--- | :--- | :--- | :--- |
+| `model` | string | 图像模型名 | `grok-imagine-1.0` |
+| `prompt` | string | 图像描述提示词 | - |
+| `n` | integer | 生成数量 | `1` - `10`（流式仅 `1` 或 `2`） |
+| `stream` | boolean | 是否开启流式输出 | `true`, `false` |
+| `size` | string | 图片尺寸/比例 | `1024x1024`、`16:9`、`9:16`、`1:1`、`2:3`、`3:2` |
+| `concurrency` | integer | 新方式并发数 | `1` - `3`（仅新生图方式生效） |
+| `response_format` | string | 图片返回格式 | `url`, `base64`, `b64_json`（默认跟随 `app.image_format`） |
+
+注：
+- `grok.image_generation_method=imagine_ws_experimental` 支持 `single`（单次）与 `continuous`（持续）两种模式。
+- `size` 在新方式下会映射为比例：`1024x576/1280x720/1536x864 -> 16:9`，`576x1024/720x1280/864x1536 -> 9:16`，`1024x1024/512x512 -> 1:1`，`1024x1536/512x768/768x1024 -> 2:3`，`1536x1024/768x512/1024x768 -> 3:2`；其他值默认 `2:3`。
+- 除上述外的其他参数将自动丢弃并忽略。
+
+<br>
 
 </details>
 
 <br>
 
-## 可用模型一览
+### `GET /v1/images/method`
 
-| 模型名称               | 计次   | 账户类型      | 图像生成/编辑 | 深度思考 | 联网搜索 | 视频生成 |
-|------------------------|--------|--------------|--------------|----------|----------|----------|
-| `grok-4`               | 1      | Basic/Super  | ✅           | ✅       | ✅       | ❌       |
-| `grok-4.1-thinking`    | 1      | Basic/Super  | ✅           | ✅       | ✅       | ❌       |
-| `grok-imagine-0.9`     | -      | Basic/Super  | ✅           | ❌       | ❌       | ✅       |
-| `grok-4-fast`          | 1      | Basic/Super  | ✅           | ✅       | ✅       | ❌       |
-| `grok-4-fast-expert`   | 4      | Basic/Super  | ✅           | ✅       | ✅       | ❌       |
-| `grok-4-expert`        | 4      | Basic/Super  | ✅           | ✅       | ✅       | ❌       |
-| `grok-4-heavy`         | 1      | Super        | ✅           | ✅       | ✅       | ❌       |
-| `grok-3-fast`          | 1      | Basic/Super  | ✅           | ❌       | ✅       | ❌       |
+> 返回当前生图后端方式（`/chat` 与 `/admin/chat` 用于判断是否启用“新生图瀑布流 + 宽高比 + 并发”）
 
-<br>
+```bash
+curl http://localhost:8000/v1/images/method \
+  -H "Authorization: Bearer $GROK2API_API_KEY"
+```
 
-## 配置参数说明
+返回示例：
+```json
+{ "image_generation_method": "legacy" }
+```
 
-> 服务启动后，登录 `/login` 管理后台进行参数配置
-
-| 参数名                     | 作用域  | 必填 | 说明                                    | 默认值 |
-|----------------------------|---------|------|-----------------------------------------|--------|
-| admin_username             | global  | 否   | 管理后台登录用户名                      | "admin"|
-| admin_password             | global  | 否   | 管理后台登录密码                        | "admin"|
-| log_level                  | global  | 否   | 日志级别：DEBUG/INFO/...                | "INFO" |
-| image_mode                 | global  | 否   | 图片返回模式：url/base64                | "url"  |
-| image_cache_max_size_mb    | global  | 否   | 图片缓存最大容量(MB)                     | 512    |
-| video_cache_max_size_mb    | global  | 否   | 视频缓存最大容量(MB)                     | 1024   |
-| base_url                   | global  | 否   | 服务基础URL/图片访问基准                 | ""     |
-| api_key                    | grok    | 否   | API 密钥（可选加强安全）                | ""     |
-| proxy_url                  | grok    | 否   | HTTP代理服务器地址                      | ""     |
-| stream_chunk_timeout       | grok    | 否   | 流式分块超时时间(秒)                     | 120    |
-| stream_first_response_timeout | grok | 否   | 流式首次响应超时时间(秒)                 | 30     |
-| stream_total_timeout       | grok    | 否   | 流式总超时时间(秒)                       | 600    |
-| cf_clearance               | grok    | 否   | Cloudflare安全令牌                      | ""     |
-| x_statsig_id               | grok    | 是   | 反机器人唯一标识符                      | "ZTpUeXBlRXJyb3I6IENhbm5vdCByZWFkIHByb3BlcnRpZXMgb2YgdW5kZWZpbmVkIChyZWFkaW5nICdjaGlsZE5vZGVzJyk=" |
-| filtered_tags              | grok    | 否   | 过滤响应标签（逗号分隔）                | "xaiartifact,xai:tool_usage_card,grok:render" |
-| show_thinking              | grok    | 否   | 显示思考过程 true(显示)/false(隐藏)     | true   |
-| temporary                  | grok    | 否   | 会话模式 true(临时)/false               | true   |
+- 可选值：`legacy`、`imagine_ws_experimental`
+- Cloudflare / Docker / 本地 三种部署均保持同一接口语义
 
 <br>
 
-## ⚠️ 注意事项
+#### `imagine_ws_experimental` (`/chat` + `/admin/chat`)
 
-本项目仅供学习与研究，请遵守相关使用条款！
+- In experimental mode, the image panel is replaced and supports two run modes: `single` and `continuous`.
+- `single` keeps using `POST /v1/images/generations` and remains response-compatible.
+- `continuous` uses WebSocket: `/api/v1/admin/imagine/ws?api_key=<API_KEY>`.
+- WS commands: `start` / `stop` / `ping`.
+- WS events: `status` / `image` / `error` / `pong`.
+- Continuous payload includes `b64_json`, `sequence`, `elapsed_ms`, `aspect_ratio`, `run_id`.
+
+### `POST /v1/images/edits`
+
+> 图像编辑接口（`multipart/form-data`）
+
+```bash
+curl http://localhost:8000/v1/images/edits \
+  -H "Authorization: Bearer $GROK2API_API_KEY" \
+  -F "model=grok-imagine-1.0-edit" \
+  -F "prompt=给这只猫加一副太阳镜" \
+  -F "image=@./cat.png" \
+  -F "n=1" \
+  -F "response_format=url"
+```
+
+<details>
+<summary>支持的请求参数</summary>
 
 <br>
 
-> 本项目基于以下项目学习重构，特别感谢：[LINUX DO](https://linux.do)、[VeroFess/grok2api](https://github.com/VeroFess/grok2api)、[xLmiler/grok2api_python](https://github.com/xLmiler/grok2api_python)
+| 字段 | 类型 | 说明 | 可用参数 |
+| :--- | :--- | :--- | :--- |
+| `model` | string | 图像模型名 | `grok-imagine-1.0-edit` |
+| `prompt` | string | 编辑提示词 | - |
+| `image` | file[] | 待编辑图片（最多 16 张） | `png`, `jpg`, `jpeg`, `webp` |
+| `n` | integer | 生成数量 | `1` - `10`（流式仅 `1` 或 `2`） |
+| `stream` | boolean | 是否开启流式输出 | `true`, `false` |
+| `response_format` | string | 图片返回格式 | `url`, `base64`, `b64_json`（默认跟随 `app.image_format`） |
+
+注：`mask` 参数当前未实现，会被忽略。
+
+<br>
+
+</details>
+
+<br>
+
+### 后台管理 API 兼容变更（FastAPI + Workers）
+
+1. `GET /api/v1/admin/tokens`（增量兼容，保留旧字段）新增：
+   - `token_type`
+   - `quota_known`
+   - `heavy_quota`
+   - `heavy_quota_known`
+2. `POST /api/v1/admin/keys/update`：
+   - 当 key 不存在时返回 `404`（此前部分实现可能返回成功）。
+3. 额度语义补充：
+   - `quota_known = false` 表示额度未知（例如 `remaining_queries = -1` 场景），不应直接判定为“额度用尽”。
+
+## 参数配置
+
+配置文件：`data/config.toml`
+
+> [!NOTE]
+> 生产环境或反向代理部署时，请确保 `app.app_url` 配置为对外可访问的完整 URL，
+> 否则可能出现文件访问链接不正确或 403 等问题。
+
+### 升级迁移（不丢数据）
+
+当你从旧版本升级到当前版本时，程序会在启动时自动兼容并读取旧数据：
+
+- 旧配置：若存在 `data/setting.toml`，会自动迁移/合并到 `data/config.toml`（仅覆盖“缺失项”或“仍为默认值”的字段）。
+- 旧缓存目录：旧版 `data/temp/{image,video}` 会自动迁移到新版 `data/tmp/{image,video}`，未到清理时间的缓存文件不会丢失。
+- Docker 部署：务必持久化挂载 `./data:/app/data`（以及 `./logs:/app/logs`），否则容器更新/重建会丢失本地数据。
+
+| 模块                  | 字段                         | 配置名       | 说明                                                 | 默认值                                                    |
+| :-------------------- | :--------------------------- | :----------- | :--------------------------------------------------- | :-------------------------------------------------------- |
+| **app**         | `app_url`                  | 应用地址     | 当前 Grok2API 服务的外部访问 URL，用于文件链接访问。 | `http://127.0.0.1:8000`                                 |
+|                       | `admin_username`           | 后台账号     | 登录 Grok2API 服务管理后台的用户名。                 | `admin`                                                 |
+|                       | `app_key`                  | 后台密码     | 登录 Grok2API 服务管理后台的密码，请妥善保管。       | `admin`                                                 |
+|                       | `api_key`                  | API 密钥     | 调用 Grok2API 服务所需的 Bearer Token，请妥善保管。  | `""`                                                    |
+|                       | `image_format`             | 图片格式     | 生成的图片格式（url / base64 / b64_json）。          | `url`                                                   |
+|                       | `video_format`             | 视频格式     | 生成的视频格式（仅支持 url）。                       | `url`                                                   |
+| **grok**        | `temporary`                | 临时对话     | 是否启用临时对话模式。                               | `true`                                                  |
+|                       | `stream`                   | 流式响应     | 是否默认启用流式输出。                               | `true`                                                  |
+|                       | `thinking`                 | 思维链       | 是否启用模型思维链输出。                             | `true`                                                  |
+|                       | `dynamic_statsig`          | 动态指纹     | 是否启用动态生成 Statsig 值。                        | `true`                                                  |
+|                       | `filter_tags`              | 过滤标签     | 自动过滤 Grok 响应中的特殊标签。                     | `["xaiartifact", "xai:tool_usage_card", "grok:render"]` |
+|                       | `video_poster_preview`     | 视频海报预览 | 将返回内容中的 `<video>` 标签替换为可点击的 Poster 预览图。 | `false`                                                 |
+|                       | `timeout`                  | 超时时间     | 请求 Grok 服务的超时时间（秒）。                     | `120`                                                   |
+|                       | `base_proxy_url`           | 基础代理 URL | 代理请求到 Grok 官网的基础服务地址。                 | `""`                                                    |
+|                       | `asset_proxy_url`          | 资源代理 URL | 代理请求到 Grok 官网的静态资源（图片/视频）地址。    | `""`                                                    |
+|                       | `cf_clearance`             | CF Clearance | Cloudflare 验证 Cookie，用于验证 Cloudflare 的验证。 | `""`                                                    |
+|                       | `max_retry`                | 最大重试     | 请求 Grok 服务失败时的最大重试次数。                 | `3`                                                     |
+|                       | `retry_status_codes`       | 重试状态码   | 触发重试的 HTTP 状态码列表。                         | `[401, 429, 403]`                                       |
+|                       | `image_generation_method`  | 生图调用方式 | 生图调用方式（`legacy` 旧方法；`imagine_ws_experimental` 新方法，实验性）。 | `legacy`                                                |
+| **token**       | `auto_refresh`             | 自动刷新     | 是否开启 Token 自动刷新机制。                        | `true`                                                  |
+|                       | `refresh_interval_hours`   | 刷新间隔     | Token 刷新的时间间隔（小时）。                       | `8`                                                     |
+|                       | `fail_threshold`           | 失败阈值     | 单个 Token 连续失败多少次后被标记为不可用。          | `5`                                                     |
+|                       | `save_delay_ms`            | 保存延迟     | Token 变更合并写入的延迟（毫秒）。                   | `500`                                                   |
+|                       | `reload_interval_sec`      | 一致性刷新   | 多 worker 场景下 Token 状态刷新间隔（秒）。          | `30`                                                    |
+|                       | `nsfw_refresh_concurrency` | NSFW 刷新并发 | 同意协议/年龄/NSFW 刷新的默认并发数。                | `10`                                                    |
+|                       | `nsfw_refresh_retries`     | NSFW 刷新重试 | 刷新失败后的额外重试次数（不含首次）。               | `3`                                                     |
+| **cache**       | `enable_auto_clean`        | 自动清理     | 是否启用缓存自动清理，开启后按上限自动回收。         | `true`                                                  |
+|                       | `limit_mb`                 | 清理阈值     | 缓存大小阈值（MB），超过阈值会触发清理。             | `1024`                                                  |
+| **performance** | `assets_max_concurrent`    | 资产并发上限 | 资源上传/下载/列表的并发上限。推荐 25。              | `25`                                                    |
+|                       | `media_max_concurrent`     | 媒体并发上限 | 视频/媒体生成请求的并发上限。推荐 50。               | `50`                                                    |
+|                       | `usage_max_concurrent`     | 用量并发上限 | 用量查询请求的并发上限。推荐 25。                    | `25`                                                    |
+|                       | `assets_delete_batch_size` | 资产清理批量 | 在线资产删除单批并发数量。推荐 10。                  | `10`                                                    |
+|                       | `admin_assets_batch_size`  | 管理端批量   | 管理端在线资产统计/清理批量并发数量。推荐 10。       | `10`                                                    |
+
+<br>
+
+## 本次修复
+
+- 修复 Token 页 `refreshStatus` 依赖全局 `event` 的问题，改为显式传入按钮引用，避免不同运行环境下按钮状态异常。
+- 新增 Token 统一归一化（`normalizeSsoToken`），修复 `sso=` 前缀导致的去重、导入、批量选择不一致问题。
+- 修复 API Key 更新接口“key 不存在仍返回成功”问题，统一为 `404`。
+- 优化 Token/API Key 页面错误提示，优先展示后端具体错误（`detail/error/message`）。
+
+## 本次更新补充（本地/Docker）
+
+- 新增：导入/手动添加/外部写入新增 Token 后，会在后台自动执行 `同意协议 + 设置年龄 + 开启 NSFW`。
+- 新增：Token 管理页增加「一键刷新 NSFW」按钮，默认对全部 Token 执行上述流程。
+- 新增：批量刷新默认并发 `10`，失败后额外重试 `3` 次；重试耗尽自动标记为失效。
+- 新增配置：
+  - `token.nsfw_refresh_concurrency`（默认 `10`）
+  - `token.nsfw_refresh_retries`（默认 `3`）
+- 说明：该功能仅在 `python-fastapi`（本地/Docker）开放；`cloudflare-workers` 侧不展示该按钮。
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=TQZHR/grok2api&type=Timeline)](https://star-history.com/#TQZHR/grok2api&Timeline)
