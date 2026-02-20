@@ -268,7 +268,7 @@ adminRoutes.get("/api/v1/admin/config", requireAdminAuth, async (c) => {
         base_proxy_url: String(settings.grok.proxy_url ?? ""),
         asset_proxy_url: String(settings.grok.cache_proxy_url ?? ""),
         cf_clearance: String(settings.grok.cf_clearance ?? ""),
-        max_retry: 3,
+        max_retry: Number(settings.grok.max_retry ?? 3),
         retry_status_codes: Array.isArray(settings.grok.retry_status_codes) ? settings.grok.retry_status_codes : [401, 429, 403],
         image_generation_method: normalizeImageGenerationMethod(
           settings.grok.image_generation_method,
@@ -339,6 +339,7 @@ adminRoutes.post("/api/v1/admin/config", requireAdminAuth, async (c) => {
       if (Array.isArray(grokCfg.retry_status_codes))
         grok_config.retry_status_codes = grokCfg.retry_status_codes.map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n));
       if (Number.isFinite(Number(grokCfg.timeout))) grok_config.stream_total_timeout = Math.max(1, Math.floor(Number(grokCfg.timeout)));
+      if (Number.isFinite(Number(grokCfg.max_retry))) grok_config.max_retry = Math.max(1, Math.floor(Number(grokCfg.max_retry)));
       if (typeof grokCfg.image_generation_method === "string" && grokCfg.image_generation_method.trim()) {
         grok_config.image_generation_method = normalizeImageGenerationMethod(
           grokCfg.image_generation_method,
@@ -720,10 +721,10 @@ adminRoutes.post("/api/v1/admin/tokens/refresh", requireAdminAuth, async (c) => 
     const placeholders = unique.map(() => "?").join(",");
     const typeRows = placeholders
       ? await dbAll<{ token: string; token_type: string }>(
-          c.env.DB,
-          `SELECT token, token_type FROM tokens WHERE token IN (${placeholders})`,
-          unique,
-        )
+        c.env.DB,
+        `SELECT token, token_type FROM tokens WHERE token IN (${placeholders})`,
+        unique,
+      )
       : [];
     const tokenTypeByToken = new Map(typeRows.map((r) => [r.token, r.token_type]));
 
