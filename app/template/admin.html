@@ -362,6 +362,13 @@
                 class="h-8 px-1 text-sm rounded-md bg-background focus:outline-none focus:ring-1 focus:ring-ring w-[90px]">
                 <option value="all">全部标签</option>
               </select>
+              <select id="tokenPerPage" onchange="changeTokenPerPage()"
+                class="h-8 px-1 text-sm rounded-md bg-background focus:outline-none focus:ring-1 focus:ring-ring w-[80px]">
+                <option value="30">30/页</option>
+                <option value="50">50/页</option>
+                <option value="200">200/页</option>
+                <option value="all">全部</option>
+              </select>
             </div>
           </div>
 
@@ -453,6 +460,30 @@
             <path d="M9 9h6v6H9z" />
           </svg>
           <p class="text-sm text-muted-foreground">暂无数据</p>
+        </div>
+
+        <div id="tokenPagination" class="flex items-center justify-between px-4 py-3 border-t border-border bg-muted/20">
+          <div class="text-xs text-muted-foreground">
+            共 <span id="tokenTotalCount">0</span> 条
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="changeTokenPage(-1)" id="tokenPrevBtn"
+              class="inline-flex items-center justify-center rounded-md text-xs font-medium h-8 w-8 border border-input bg-background hover:bg-accent disabled:opacity-50 transition-colors">
+              <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+            </button>
+            <span class="text-xs font-medium px-2">第 <span id="tokenCurrentPage">1</span> / <span id="tokenMaxPage">1</span>
+              页</span>
+            <button onclick="changeTokenPage(1)" id="tokenNextBtn"
+              class="inline-flex items-center justify-center rounded-md text-xs font-medium h-8 w-8 border border-input bg-background hover:bg-accent disabled:opacity-50 transition-colors">
+              <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2">
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1184,6 +1215,7 @@
 
   <script>
     let allTokens = [], filteredTokens = [], selectedTokens = new Set(), allTagsList = [];
+    let tokenCurrentPage = 1, tokenPerPage = '30', tokenTotal = 0, tokenMaxPage = 1;
     let allLogsData = [], currentLogPage = 1, logsPerPage = 20;
     const selectedKeys = new Set();
     const $ = (id) => document.getElementById(id);
@@ -1500,13 +1532,40 @@
       } catch (e) { console.error('加载统计失败:', e) }
     };
     const calcRemaining = () => { let n = 0, h = 0; allTokens.forEach(t => { if (t.remaining_queries > 0) n += t.remaining_queries; if (t.heavy_remaining_queries > 0) h += t.heavy_remaining_queries }); return { normal: n, heavy: h, total: n + h } };
+    const buildTokenQuery = () => {
+      const tf = $('filterType')?.value || 'all';
+      const sf = $('filterStatus')?.value || 'all';
+      const tagf = $('filterTag')?.value || 'all';
+      const params = new URLSearchParams();
+      params.set('page', String(tokenCurrentPage));
+      params.set('per_page', String(tokenPerPage || '30'));
+      if (tf !== 'all') params.set('token_type', tf);
+      if (sf !== 'all') params.set('status', sf);
+      if (tagf !== 'all') params.set('tag', tagf);
+      return params.toString();
+    };
+    const updateTokenPagination = () => {
+      $('tokenTotalCount').textContent = tokenTotal;
+      $('tokenCurrentPage').textContent = tokenCurrentPage;
+      $('tokenMaxPage').textContent = tokenMaxPage;
+      $('tokenPrevBtn').disabled = tokenCurrentPage <= 1;
+      $('tokenNextBtn').disabled = tokenCurrentPage >= tokenMaxPage;
+      $('tokenPagination').classList.toggle('hidden', tokenTotal === 0);
+      if ($('tokenPerPage').value !== String(tokenPerPage)) {
+        $('tokenPerPage').value = String(tokenPerPage);
+      }
+    };
     const loadTokens = async () => {
       try {
-        const r = await apiRequest('/api/tokens');
+        const r = await apiRequest(`/api/tokens?${buildTokenQuery()}`);
         if (!r) return;
         const d = await r.json();
         if (d.success) {
-          allTokens = d.data.map(t => ({
+          tokenTotal = Number(d.total || 0);
+          tokenCurrentPage = Number(d.page || tokenCurrentPage || 1);
+          tokenPerPage = String(d.per_page || tokenPerPage || '30');
+          tokenMaxPage = Number(d.pages || 1) || 1;
+          allTokens = (d.items || d.data || []).map(t => ({
             ...t,
             tags: t.tags || [],
             note: t.note || '',
@@ -1519,6 +1578,7 @@
           filteredTokens = allTokens;
           selectedTokens.clear();
           renderTokens();
+          updateTokenPagination();
           updateRemaining();
           await loadAllTags();
         }
@@ -1577,7 +1637,16 @@
     const toggleToken = t => selectedTokens[selectedTokens.has(t) ? 'delete' : 'add'](t) || updateBatchActions();
     const toggleSelectAll = () => { const sa = $('selectAll'); sa.checked ? filteredTokens.forEach(t => selectedTokens.add(t.token)) : selectedTokens.clear(); renderTokens() };
     const updateBatchActions = () => { const ba = $('batchActions'), sc = $('selectedCount'), c = selectedTokens.size; ba.classList[c > 0 ? 'add' : 'remove']('flex'); ba.classList[c > 0 ? 'remove' : 'add']('hidden'); c > 0 && (sc.textContent = `已选择 ${c} 项`); $('selectAll').checked = filteredTokens.length > 0 && c === filteredTokens.length };
-    const filterTokens = () => { const tf = $('filterType').value, sf = $('filterStatus').value, tagf = $('filterTag').value; filteredTokens = allTokens.filter(t => (tf === 'all' || t.token_type === tf) && (sf === 'all' || t.status === sf) && (tagf === 'all' || t.tags && t.tags.includes(tagf))); selectedTokens.clear(); renderTokens() };
+    const filterTokens = () => { tokenCurrentPage = 1; loadTokens(); };
+    const changeTokenPage = (delta) => {
+      const next = tokenCurrentPage + delta;
+      if (next < 1 || next > tokenMaxPage) return;
+      tokenCurrentPage = next;
+      loadTokens();
+      const wrap = $('tokenTableBody').closest('.overflow-auto');
+      if (wrap) wrap.scrollTop = 0;
+    };
+    const changeTokenPerPage = () => { tokenPerPage = $('tokenPerPage').value || '30'; tokenCurrentPage = 1; loadTokens(); };
     const loadAllTags = async () => { try { const r = await apiRequest('/api/tokens/tags/all'); if (!r) return; const d = await r.json(); if (d.success) { allTagsList = d.data; const tagFilter = $('filterTag'); const currentValue = tagFilter.value; tagFilter.innerHTML = '<option value="all">全部标签</option>' + allTagsList.map(tag => `<option value="${tag}">${tag}</option>`).join(''); tagFilter.value = currentValue } } catch (e) { console.error('加载标签列表失败:', e) } };
     const refreshTokens = async () => { await loadTokens(); await loadStats() };
     const refreshAllTokens = async () => {

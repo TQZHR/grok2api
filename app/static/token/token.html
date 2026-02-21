@@ -155,6 +155,24 @@
         </div>
       </div>
 
+      <div id="token-pagination" class="token-pagination mb-6">
+        <div class="token-pagination-meta text-xs text-[var(--accents-5)]">
+          共 <span id="token-total-count">0</span> 条
+        </div>
+        <div class="token-pagination-controls">
+          <label class="text-xs text-[var(--accents-5)]" for="token-per-page">每页</label>
+          <select id="token-per-page" class="geist-input token-page-size" onchange="onPerPageChange()">
+            <option value="30">30</option>
+            <option value="50">50</option>
+            <option value="200">200</option>
+            <option value="all">全部</option>
+          </select>
+          <button class="geist-button-outline token-page-btn" id="token-prev-btn" onclick="changePage(-1)">上一页</button>
+          <span class="text-xs text-[var(--accents-5)]">第 <span id="token-current-page">1</span> / <span id="token-total-pages">1</span> 页</span>
+          <button class="geist-button-outline token-page-btn" id="token-next-btn" onclick="changePage(1)">下一页</button>
+        </div>
+      </div>
+
       <!-- Batch Actions Bar (Floating Bottom) -->
 
     </div>
