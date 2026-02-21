@@ -198,6 +198,39 @@
       align-items: flex-start;
     }
 
+    .token-pagination {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .token-pagination-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .token-page-size {
+      height: 28px;
+      min-width: 70px;
+      padding: 0 8px;
+      font-size: 12px;
+    }
+
+    .token-page-btn {
+      height: 28px;
+      padding: 0 10px;
+      font-size: 12px;
+    }
+
+    .token-page-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
     #batch-actions {
       background: rgba(255, 255, 255, 0.92);
       border: 1px solid var(--border);
@@ -292,6 +325,15 @@
 
       #token-filter-bar .filter-summary .geist-button-outline {
         width: 100%;
+      }
+
+      .token-pagination {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .token-pagination-controls {
+        justify-content: space-between;
       }
 
       #batch-actions {

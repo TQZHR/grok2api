@@ -16,6 +16,11 @@ let isWorkersRuntime = false;
 let isNsfwRefreshAllRunning = false;
 
 let displayTokens = [];
+let tokenCurrentPage = 1;
+let tokenPerPage = '30';
+let tokenTotal = 0;
+let tokenTotalPages = 1;
+let lastLoadedPageTokenKeys = new Set();
 const filterState = {
   typeSso: false,
   typeSuperSso: false,
@@ -132,38 +137,68 @@ function refreshFilterStateFromDom() {
   filterState.statusExhausted = getChecked('filter-status-exhausted');
 }
 
-function applyFilters() {
+function resolveTokenTypeFilter() {
+  const hasSso = filterState.typeSso;
+  const hasSuper = filterState.typeSuperSso;
+  if (hasSso && !hasSuper) return 'sso';
+  if (!hasSso && hasSuper) return 'ssoSuper';
+  return '';
+}
+
+function resolveTokenStatusFilter() {
+  const statuses = [];
+  if (filterState.statusActive) statuses.push('active');
+  if (filterState.statusInvalid) statuses.push('invalid');
+  if (filterState.statusExhausted) statuses.push('exhausted');
+  if (statuses.length === 1) return statuses[0];
+  return '';
+}
+
+function buildTokenQueryParams(pageOverride = null, perPageOverride = null) {
   refreshFilterStateFromDom();
+  const params = new URLSearchParams();
+  params.set('page', String(pageOverride || tokenCurrentPage || 1));
+  params.set('per_page', String(perPageOverride || tokenPerPage || '30'));
 
-  const hasTypeFilter = filterState.typeSso || filterState.typeSuperSso;
-  const hasStatusFilter = filterState.statusActive || filterState.statusInvalid || filterState.statusExhausted;
+  const tokenType = resolveTokenTypeFilter();
+  if (tokenType) params.set('token_type', tokenType);
+  const status = resolveTokenStatusFilter();
+  if (status) params.set('status', status);
+  return params;
+}
 
-  displayTokens = flatTokens.filter((item) => {
-    const tokenType = String(item.token_type || poolToType(item.pool));
-    const matchesType = !hasTypeFilter
-      || (filterState.typeSso && tokenType === 'sso')
-      || (filterState.typeSuperSso && tokenType === 'ssoSuper');
+function updatePaginationUi() {
+  const setText = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = String(value);
+  };
+  setText('token-total-count', tokenTotal);
+  setText('token-current-page', tokenCurrentPage);
+  setText('token-total-pages', tokenTotalPages);
 
-    if (!matchesType) return false;
-    if (!hasStatusFilter) return true;
+  const prev = document.getElementById('token-prev-btn');
+  const next = document.getElementById('token-next-btn');
+  if (prev) prev.disabled = tokenCurrentPage <= 1;
+  if (next) next.disabled = tokenCurrentPage >= tokenTotalPages;
 
-    const active = isTokenActive(item);
-    const invalid = isTokenInvalid(item);
-    const exhausted = isTokenExhausted(item);
-    return (filterState.statusActive && active)
-      || (filterState.statusInvalid && invalid)
-      || (filterState.statusExhausted && exhausted);
-  });
+  const perPageEl = document.getElementById('token-per-page');
+  if (perPageEl && perPageEl.value !== String(tokenPerPage)) {
+    perPageEl.value = String(tokenPerPage);
+  }
+}
+
+function applyFilters() {
+  displayTokens = flatTokens.slice();
 
   const resultEl = document.getElementById('filter-result-count');
   if (resultEl) {
-    resultEl.textContent = String(displayTokens.length);
+    resultEl.textContent = String(tokenTotal || displayTokens.length);
   }
 }
 
 function onFilterChange() {
-  applyFilters();
-  renderTable();
+  tokenCurrentPage = 1;
+  loadData();
 }
 
 function resetFilters() {
@@ -172,8 +207,22 @@ function resetFilters() {
       const el = document.getElementById(id);
       if (el) el.checked = false;
     });
-  applyFilters();
-  renderTable();
+  tokenCurrentPage = 1;
+  loadData();
+}
+
+function onPerPageChange() {
+  const el = document.getElementById('token-per-page');
+  tokenPerPage = el ? String(el.value || '30') : '30';
+  tokenCurrentPage = 1;
+  loadData();
+}
+
+function changePage(delta) {
+  const next = tokenCurrentPage + Number(delta || 0);
+  if (next < 1 || next > tokenTotalPages) return;
+  tokenCurrentPage = next;
+  loadData();
 }
 
 function setAutoRegisterUiEnabled(enabled) {
@@ -252,7 +301,7 @@ function startLiveStats() {
 
 async function refreshStatsOnly() {
   try {
-    const res = await fetch('/api/v1/admin/tokens', {
+    const res = await fetch('/api/v1/admin/metrics', {
       headers: buildAuthHeaders(apiKey)
     });
     if (res.status === 401) {
@@ -260,39 +309,15 @@ async function refreshStatsOnly() {
       return;
     }
     if (!res.ok) return;
-    const data = await res.json();
-
-    // Recalculate stats without re-rendering table.
-    let totalTokens = 0;
-    let activeTokens = 0;
-    let coolingTokens = 0;
-    let invalidTokens = 0;
-    let chatQuota = 0;
-    let totalCalls = 0;
-
-    Object.keys(data || {}).forEach(pool => {
-      const tokens = data[pool];
-      if (!Array.isArray(tokens)) return;
-      tokens.forEach(t => {
-        const row = normalizeTokenRecord(pool, t);
-        if (!row) return;
-        totalTokens += 1;
-        const useCount = Number(row.use_count || 0) || 0;
-        totalCalls += useCount;
-        if (isTokenInvalid(row)) {
-          invalidTokens += 1;
-        } else if (isTokenExhausted(row)) {
-          coolingTokens += 1;
-        } else {
-          activeTokens += 1;
-          if (Boolean(row.quota_known) && Number(row.quota) > 0) {
-            chatQuota += Number(row.quota);
-          }
-        }
-      });
-    });
-
-    const imageQuota = Math.floor(chatQuota / 2);
+    const payload = await res.json();
+    const data = payload?.tokens || payload || {};
+    const totalTokens = Number(data.total || 0);
+    const activeTokens = Number(data.active || 0);
+    const coolingTokens = Number(data.cooling || 0);
+    const invalidTokens = Number(data.expired || 0) + Number(data.disabled || 0);
+    const chatQuota = Number(data.chat_quota || 0);
+    const imageQuota = Number(data.image_quota || Math.floor(chatQuota / 2));
+    const totalCalls = Number(data.total_calls || 0);
 
     const setText = (id, text) => {
       const el = document.getElementById(id);
@@ -312,14 +337,20 @@ async function refreshStatsOnly() {
 
 async function loadData() {
   try {
-    const res = await fetch('/api/v1/admin/tokens', {
+    const params = buildTokenQueryParams();
+    const res = await fetch(`/api/v1/admin/tokens?${params.toString()}`, {
       headers: buildAuthHeaders(apiKey)
     });
     if (res.ok) {
       const data = await parseJsonSafely(res);
-      allTokens = data;
+      allTokens = data || {};
+      tokenTotal = Number(data?.total || 0);
+      tokenCurrentPage = Number(data?.page || tokenCurrentPage || 1);
+      tokenPerPage = String(data?.per_page || tokenPerPage || '30');
+      tokenTotalPages = Number(data?.pages || 1) || 1;
       processTokens(data);
-      updateStats(data);
+      updatePaginationUi();
+      await refreshStatsOnly();
       applyFilters();
       renderTable();
     } else if (res.status === 401) {
@@ -339,10 +370,25 @@ function processTokens(data) {
   flatTokens = [];
   const seen = new Set();
 
+  const pagedItems = Array.isArray(data?.items) ? data.items : null;
+  if (pagedItems) {
+    pagedItems.forEach((t) => {
+      const pool = String(t?.pool || (poolToType(t?.token_type) === 'ssoSuper' ? 'ssoSuper' : 'ssoBasic'));
+      const row = normalizeTokenRecord(pool, t);
+      if (!row) return;
+      const dedupeKey = `${pool}:${getTokenKey(row.token)}`;
+      if (seen.has(dedupeKey)) return;
+      seen.add(dedupeKey);
+      row._selected = prevSelected.has(getTokenKey(row.token));
+      flatTokens.push(row);
+    });
+    lastLoadedPageTokenKeys = new Set(flatTokens.map((t) => getTokenKey(t.token)));
+    return;
+  }
+
   Object.keys(data || {}).forEach(pool => {
     const tokens = data[pool];
     if (!Array.isArray(tokens)) return;
-
     tokens.forEach(t => {
       const row = normalizeTokenRecord(pool, t);
       if (!row) return;
@@ -353,45 +399,7 @@ function processTokens(data) {
       flatTokens.push(row);
     });
   });
-}
-
-function updateStats(data) {
-  let totalTokens = flatTokens.length;
-  let activeTokens = 0;
-  let coolingTokens = 0;
-  let invalidTokens = 0;
-  let chatQuota = 0;
-  let totalCalls = 0;
-
-  flatTokens.forEach(t => {
-    if (isTokenInvalid(t)) {
-      invalidTokens++;
-    } else if (isTokenExhausted(t)) {
-      coolingTokens++;
-    } else {
-      activeTokens++;
-      if (Boolean(t.quota_known) && Number(t.quota) > 0) {
-        chatQuota += Number(t.quota);
-      }
-    }
-    totalCalls += Number(t.use_count || 0);
-  });
-
-  const imageQuota = Math.floor(chatQuota / 2);
-
-  const setText = (id, text) => {
-    const el = document.getElementById(id);
-    if (el) el.innerText = text;
-  };
-
-  setText('stat-total', totalTokens.toLocaleString());
-  setText('stat-active', activeTokens.toLocaleString());
-  setText('stat-cooling', coolingTokens.toLocaleString());
-  setText('stat-invalid', invalidTokens.toLocaleString());
-
-  setText('stat-chat-quota', chatQuota.toLocaleString());
-  setText('stat-image-quota', imageQuota.toLocaleString());
-  setText('stat-total-calls', totalCalls.toLocaleString());
+  lastLoadedPageTokenKeys = new Set(flatTokens.map((t) => getTokenKey(t.token)));
 }
 
 function renderTable() {
@@ -985,21 +993,58 @@ function batchDelete() {
 
 // Reconstruct object structure and save
 async function syncToServer() {
-  const newTokens = {};
-  flatTokens.forEach(t => {
-    if (!newTokens[t.pool]) newTokens[t.pool] = [];
-    newTokens[t.pool].push({
-      token: normalizeSsoToken(t.token),
-      status: t.status,
-      quota: t.quota,
-      heavy_quota: t.heavy_quota,
-      note: t.note,
-      fail_count: t.fail_count,
-      use_count: t.use_count || 0
-    });
-  });
-
   try {
+    const fullRes = await fetch('/api/v1/admin/tokens?page=1&per_page=all', {
+      headers: buildAuthHeaders(apiKey)
+    });
+    if (!fullRes.ok) {
+      const payload = await parseJsonSafely(fullRes);
+      showToast(extractApiErrorMessage(payload, '加载全量 Token 失败'), 'error');
+      return null;
+    }
+    const fullData = await parseJsonSafely(fullRes);
+    const allItems = Array.isArray(fullData?.items)
+      ? fullData.items.map((t) => {
+          const pool = String(t?.pool || (poolToType(t?.token_type) === 'ssoSuper' ? 'ssoSuper' : 'ssoBasic'));
+          return normalizeTokenRecord(pool, t);
+        }).filter(Boolean)
+      : [];
+
+    const mergedByKey = new Map();
+    allItems.forEach((t) => {
+      const key = getTokenKey(t.token);
+      mergedByKey.set(key, t);
+    });
+
+    const pageLocalByKey = new Map();
+    flatTokens.forEach((t) => {
+      pageLocalByKey.set(getTokenKey(t.token), t);
+    });
+
+    lastLoadedPageTokenKeys.forEach((key) => {
+      if (!pageLocalByKey.has(key)) {
+        mergedByKey.delete(key);
+      }
+    });
+
+    pageLocalByKey.forEach((item, key) => {
+      mergedByKey.set(key, item);
+    });
+
+    const newTokens = {};
+    Array.from(mergedByKey.values()).forEach((t) => {
+      if (!newTokens[t.pool]) newTokens[t.pool] = [];
+      newTokens[t.pool].push({
+        token: normalizeSsoToken(t.token),
+        status: t.status,
+        quota: t.quota,
+        heavy_quota: t.heavy_quota,
+        note: t.note,
+        fail_count: t.fail_count,
+        use_count: t.use_count || 0
+      });
+    });
+
     const res = await fetch('/api/v1/admin/tokens', {
       method: 'POST',
       headers: {

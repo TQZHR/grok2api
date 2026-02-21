@@ -19,6 +19,19 @@ export interface TokenRow {
   failed_count: number;
 }
 
+export interface TokenListFilters {
+  token_type?: TokenType | "all";
+  status?: string;
+  nsfw?: string;
+  search?: string;
+  tag?: string;
+}
+
+export interface TokenListPageResult {
+  total: number;
+  items: TokenRow[];
+}
+
 const MAX_FAILURES = 3;
 
 function parseTags(tagsJson: string): string[] {
@@ -94,6 +107,89 @@ export async function listTokens(db: Env["DB"]): Promise<TokenRow[]> {
     db,
     "SELECT token, token_type, created_time, remaining_queries, heavy_remaining_queries, status, tags, note, cooldown_until, last_failure_time, last_failure_reason, failed_count FROM tokens ORDER BY created_time DESC",
   );
+}
+
+function buildTokenWhere(filters?: TokenListFilters): { where: string; params: unknown[] } {
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+
+  const tokenType = filters?.token_type;
+  if (tokenType === "sso" || tokenType === "ssoSuper") {
+    clauses.push("token_type = ?");
+    params.push(tokenType);
+  }
+
+  const search = String(filters?.search ?? "").trim();
+  if (search) {
+    clauses.push("token LIKE ?");
+    params.push(`%${search}%`);
+  }
+
+  const tag = String(filters?.tag ?? "").trim();
+  if (tag && tag !== "all") {
+    clauses.push("tags LIKE ?");
+    params.push(`%${tag.replace(/\"/g, "")}%`);
+  }
+
+  const nsfw = String(filters?.nsfw ?? "").trim().toLowerCase();
+  if (nsfw) {
+    if (["1", "true", "yes", "on", "enabled"].includes(nsfw)) {
+      clauses.push("LOWER(note) LIKE '%nsfw%'");
+    } else if (["0", "false", "no", "off", "disabled"].includes(nsfw)) {
+      clauses.push("LOWER(note) NOT LIKE '%nsfw%'");
+    }
+  }
+
+  const status = String(filters?.status ?? "").trim();
+  if (status) {
+    if (status === "invalid" || status === "失效") {
+      clauses.push("status = 'expired'");
+    } else if (status === "active" || status === "正常") {
+      clauses.push("status != 'expired'");
+      clauses.push("(cooldown_until IS NULL OR cooldown_until <= ?)");
+      params.push(nowMs());
+      clauses.push("(CASE WHEN token_type = 'ssoSuper' THEN (remaining_queries > 0 AND heavy_remaining_queries > 0) ELSE (remaining_queries > 0) END)");
+    } else if (status === "cooling" || status === "冷却中") {
+      clauses.push("status != 'expired'");
+      clauses.push("cooldown_until IS NOT NULL AND cooldown_until > ?");
+      params.push(nowMs());
+    } else if (status === "exhausted" || status === "额度耗尽") {
+      clauses.push("status != 'expired'");
+      clauses.push("(cooldown_until IS NULL OR cooldown_until <= ?)");
+      params.push(nowMs());
+      clauses.push("(CASE WHEN token_type = 'ssoSuper' THEN (remaining_queries = 0 OR heavy_remaining_queries = 0) ELSE (remaining_queries = 0) END)");
+    } else if (status === "unused" || status === "未使用") {
+      clauses.push("status != 'expired'");
+      clauses.push("(cooldown_until IS NULL OR cooldown_until <= ?)");
+      params.push(nowMs());
+      clauses.push("(CASE WHEN token_type = 'ssoSuper' THEN (remaining_queries = -1 AND heavy_remaining_queries = -1) ELSE (remaining_queries = -1) END)");
+    }
+  }
+
+  return {
+    where: clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "",
+    params,
+  };
+}
+
+export async function listTokensPaged(
+  db: Env["DB"],
+  limit: number,
+  offset: number,
+  filters?: TokenListFilters,
+): Promise<TokenListPageResult> {
+  const { where, params } = buildTokenWhere(filters);
+  const countRow = await dbFirst<{ c: number }>(db, `SELECT COUNT(1) as c FROM tokens${where}`, params);
+  const total = countRow?.c ?? 0;
+
+  const pageParams = [...params, limit, offset];
+  const items = await dbAll<TokenRow>(
+    db,
+    `SELECT token, token_type, created_time, remaining_queries, heavy_remaining_queries, status, tags, note, cooldown_until, last_failure_time, last_failure_reason, failed_count FROM tokens${where} ORDER BY created_time DESC LIMIT ? OFFSET ?`,
+    pageParams,
+  );
+
+  return { total, items };
 }
 
 export async function addTokens(db: Env["DB"], tokens: string[], token_type: TokenType): Promise<number> {
