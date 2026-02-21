@@ -28,8 +28,26 @@ class RequestStats:
         self.file_path = Path(__file__).parents[2] / "data" / "stats.json"
         
         # 统计数据
-        self._hourly: Dict[str, Dict[str, int]] = defaultdict(lambda: {"total": 0, "success": 0, "failed": 0})
-        self._daily: Dict[str, Dict[str, int]] = defaultdict(lambda: {"total": 0, "success": 0, "failed": 0})
+        self._hourly: Dict[str, Dict[str, int]] = defaultdict(lambda: {
+            "total": 0,
+            "success": 0,
+            "failed": 0,
+            "total_tokens": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_tokens": 0,
+            "cached_tokens": 0,
+        })
+        self._daily: Dict[str, Dict[str, int]] = defaultdict(lambda: {
+            "total": 0,
+            "success": 0,
+            "failed": 0,
+            "total_tokens": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_tokens": 0,
+            "cached_tokens": 0,
+        })
         self._models: Dict[str, int] = defaultdict(int)
         
         # 保留策略
@@ -61,10 +79,28 @@ class RequestStats:
                     data = orjson.loads(content)
                     
                     # 恢复 defaultdict 结构
-                    self._hourly = defaultdict(lambda: {"total": 0, "success": 0, "failed": 0})
+                    self._hourly = defaultdict(lambda: {
+                        "total": 0,
+                        "success": 0,
+                        "failed": 0,
+                        "total_tokens": 0,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "reasoning_tokens": 0,
+                        "cached_tokens": 0,
+                    })
                     self._hourly.update(data.get("hourly", {}))
                     
-                    self._daily = defaultdict(lambda: {"total": 0, "success": 0, "failed": 0})
+                    self._daily = defaultdict(lambda: {
+                        "total": 0,
+                        "success": 0,
+                        "failed": 0,
+                        "total_tokens": 0,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "reasoning_tokens": 0,
+                        "cached_tokens": 0,
+                    })
                     self._daily.update(data.get("daily", {}))
                     
                     self._models = defaultdict(int)
@@ -96,7 +132,16 @@ class RequestStats:
         except Exception as e:
             logger.error(f"[Stats] 保存数据失败: {e}")
     
-    async def record_request(self, model: str, success: bool) -> None:
+    async def record_request(
+        self,
+        model: str,
+        success: bool,
+        total_tokens: int = 0,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        reasoning_tokens: int = 0,
+        cached_tokens: int = 0,
+    ) -> None:
         """记录一次请求"""
         if not self._loaded:
             await self.init()
@@ -111,6 +156,11 @@ class RequestStats:
             self._hourly[hour_key]["success"] += 1
         else:
             self._hourly[hour_key]["failed"] += 1
+        self._hourly[hour_key]["total_tokens"] += int(total_tokens or 0)
+        self._hourly[hour_key]["input_tokens"] += int(input_tokens or 0)
+        self._hourly[hour_key]["output_tokens"] += int(output_tokens or 0)
+        self._hourly[hour_key]["reasoning_tokens"] += int(reasoning_tokens or 0)
+        self._hourly[hour_key]["cached_tokens"] += int(cached_tokens or 0)
         
         # 天统计
         self._daily[day_key]["total"] += 1
@@ -118,6 +168,11 @@ class RequestStats:
             self._daily[day_key]["success"] += 1
         else:
             self._daily[day_key]["failed"] += 1
+        self._daily[day_key]["total_tokens"] += int(total_tokens or 0)
+        self._daily[day_key]["input_tokens"] += int(input_tokens or 0)
+        self._daily[day_key]["output_tokens"] += int(output_tokens or 0)
+        self._daily[day_key]["reasoning_tokens"] += int(reasoning_tokens or 0)
+        self._daily[day_key]["cached_tokens"] += int(cached_tokens or 0)
         
         # 模型统计
         self._models[model] += 1
@@ -154,7 +209,16 @@ class RequestStats:
             from datetime import timedelta
             dt = now - timedelta(hours=i)
             key = dt.strftime("%Y-%m-%dT%H")
-            data = self._hourly.get(key, {"total": 0, "success": 0, "failed": 0})
+            data = self._hourly.get(key, {
+                "total": 0,
+                "success": 0,
+                "failed": 0,
+                "total_tokens": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "reasoning_tokens": 0,
+                "cached_tokens": 0,
+            })
             hourly_data.append({
                 "hour": dt.strftime("%H:00"),
                 "date": dt.strftime("%m-%d"),
@@ -167,7 +231,16 @@ class RequestStats:
             from datetime import timedelta
             dt = now - timedelta(days=i)
             key = dt.strftime("%Y-%m-%d")
-            data = self._daily.get(key, {"total": 0, "success": 0, "failed": 0})
+            data = self._daily.get(key, {
+                "total": 0,
+                "success": 0,
+                "failed": 0,
+                "total_tokens": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "reasoning_tokens": 0,
+                "cached_tokens": 0,
+            })
             daily_data.append({
                 "date": dt.strftime("%m-%d"),
                 **data
@@ -180,6 +253,11 @@ class RequestStats:
         total_requests = sum(d["total"] for d in self._hourly.values())
         total_success = sum(d["success"] for d in self._hourly.values())
         total_failed = sum(d["failed"] for d in self._hourly.values())
+        total_tokens = sum(int(d.get("total_tokens", 0) or 0) for d in self._hourly.values())
+        input_tokens = sum(int(d.get("input_tokens", 0) or 0) for d in self._hourly.values())
+        output_tokens = sum(int(d.get("output_tokens", 0) or 0) for d in self._hourly.values())
+        reasoning_tokens = sum(int(d.get("reasoning_tokens", 0) or 0) for d in self._hourly.values())
+        cached_tokens = sum(int(d.get("cached_tokens", 0) or 0) for d in self._hourly.values())
         
         return {
             "hourly": hourly_data,
@@ -189,7 +267,12 @@ class RequestStats:
                 "total": total_requests,
                 "success": total_success,
                 "failed": total_failed,
-                "success_rate": round(total_success / total_requests * 100, 1) if total_requests > 0 else 0
+                "success_rate": round(total_success / total_requests * 100, 1) if total_requests > 0 else 0,
+                "total_tokens": total_tokens,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "reasoning_tokens": reasoning_tokens,
+                "cached_tokens": cached_tokens,
             }
         }
     

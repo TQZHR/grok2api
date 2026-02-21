@@ -1,4 +1,5 @@
 import type { GrokSettings, GlobalSettings } from "../settings";
+import { buildChatUsageFromTexts, estimateInputTokensFromMessages, estimateTokens } from "../utils/token_usage";
 
 type GrokNdjson = Record<string, unknown>;
 
@@ -121,8 +122,13 @@ export function createOpenAiStreamFromGrokNdjson(
     settings: GrokSettings;
     global: GlobalSettings;
     origin: string;
+    promptMessages?: Array<{ content?: unknown }>;
     requestedModel: string;
-    onFinish?: (result: { status: number; duration: number }) => Promise<void> | void;
+    onFinish?: (result: {
+      status: number;
+      duration: number;
+      usage?: ReturnType<typeof buildChatUsageFromTexts>;
+    }) => Promise<void> | void;
   },
 ): ReadableStream<Uint8Array> {
   const { settings, global, origin } = opts;
@@ -145,6 +151,9 @@ export function createOpenAiStreamFromGrokNdjson(
   const firstTimeoutMs = Math.max(0, (settings.stream_first_response_timeout ?? 30) * 1000);
   const chunkTimeoutMs = Math.max(0, (settings.stream_chunk_timeout ?? 120) * 1000);
   const totalTimeoutMs = Math.max(0, (settings.stream_total_timeout ?? 600) * 1000);
+
+  const promptEst = estimateInputTokensFromMessages(opts.promptMessages ?? []);
+  let completionText = "";
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -377,14 +386,55 @@ export function createOpenAiStreamFromGrokNdjson(
               shouldSkip = true;
             }
 
-            if (!shouldSkip) controller.enqueue(encoder.encode(makeChunk(id, created, currentModel, content)));
+            if (!shouldSkip) {
+              completionText += content;
+              controller.enqueue(encoder.encode(makeChunk(id, created, currentModel, content)));
+            }
             isThinking = currentIsThinking;
           }
         }
 
+        const usage = buildChatUsageFromTexts({
+          promptTextTokens: promptEst.textTokens,
+          promptImageTokens: promptEst.imageTokens,
+          completionText,
+        });
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({
+              id,
+              object: "chat.completion.chunk",
+              created,
+              model: currentModel,
+              choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+              usage: {
+                prompt_tokens: usage.input_tokens,
+                completion_tokens: usage.output_tokens,
+                total_tokens: usage.total_tokens,
+                prompt_tokens_details: {
+                  cached_tokens: usage.cached_tokens,
+                  text_tokens: usage.input_tokens_details.text_tokens,
+                  audio_tokens: 0,
+                  image_tokens: usage.input_tokens_details.image_tokens,
+                },
+                completion_tokens_details: {
+                  text_tokens: usage.output_tokens_details.text_tokens,
+                  audio_tokens: 0,
+                  reasoning_tokens: usage.reasoning_tokens,
+                },
+              },
+            })}\n\n`,
+          ),
+        );
         controller.enqueue(encoder.encode(makeChunk(id, created, currentModel, "", "stop")));
         controller.enqueue(encoder.encode(makeDone()));
-        if (opts.onFinish) await opts.onFinish({ status: finalStatus, duration: (Date.now() - startTime) / 1000 });
+        if (opts.onFinish) {
+          await opts.onFinish({
+            status: finalStatus,
+            duration: (Date.now() - startTime) / 1000,
+            usage,
+          });
+        }
         controller.close();
       } catch (e) {
         finalStatus = 500;
@@ -394,7 +444,9 @@ export function createOpenAiStreamFromGrokNdjson(
           ),
         );
         controller.enqueue(encoder.encode(makeDone()));
-        if (opts.onFinish) await opts.onFinish({ status: finalStatus, duration: (Date.now() - startTime) / 1000 });
+        if (opts.onFinish) {
+          await opts.onFinish({ status: finalStatus, duration: (Date.now() - startTime) / 1000 });
+        }
         controller.close();
       } finally {
         try {
@@ -409,7 +461,14 @@ export function createOpenAiStreamFromGrokNdjson(
 
 export async function parseOpenAiFromGrokNdjson(
   grokResp: Response,
-  opts: { cookie: string; settings: GrokSettings; global: GlobalSettings; origin: string; requestedModel: string },
+  opts: {
+    cookie: string;
+    settings: GrokSettings;
+    global: GlobalSettings;
+    origin: string;
+    requestedModel: string;
+    promptMessages?: Array<{ content?: unknown }>;
+  },
 ): Promise<Record<string, unknown>> {
   const { global, origin, requestedModel, settings } = opts;
   const text = await grokResp.text();
@@ -476,6 +535,13 @@ export async function parseOpenAiFromGrokNdjson(
     break;
   }
 
+  const promptEst = estimateInputTokensFromMessages(opts.promptMessages ?? []);
+  const usage = buildChatUsageFromTexts({
+    promptTextTokens: promptEst.textTokens,
+    promptImageTokens: promptEst.imageTokens,
+    completionText: content,
+  });
+
   return {
     id: `chatcmpl-${crypto.randomUUID()}`,
     object: "chat.completion",
@@ -488,6 +554,21 @@ export async function parseOpenAiFromGrokNdjson(
         finish_reason: "stop",
       },
     ],
-    usage: null,
+    usage: {
+      prompt_tokens: usage.input_tokens,
+      completion_tokens: usage.output_tokens,
+      total_tokens: usage.total_tokens,
+      prompt_tokens_details: {
+        cached_tokens: usage.cached_tokens,
+        text_tokens: usage.input_tokens_details.text_tokens,
+        audio_tokens: 0,
+        image_tokens: usage.input_tokens_details.image_tokens,
+      },
+      completion_tokens_details: {
+        text_tokens: usage.output_tokens_details.text_tokens,
+        audio_tokens: 0,
+        reasoning_tokens: usage.reasoning_tokens,
+      },
+    },
   };
 }

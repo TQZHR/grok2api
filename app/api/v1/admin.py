@@ -462,6 +462,121 @@ def _normalize_admin_token_item(pool_name: str, item: Any) -> dict | None:
     }
 
 
+TOKEN_PAGE_DEFAULT = 30
+TOKEN_PAGE_ALLOWED = {30, 50, 200}
+TOKEN_PAGE_ALL_LIMIT = 10000
+
+
+def _parse_token_page(page: Any) -> int:
+    try:
+        n = int(page)
+    except Exception:
+        n = 1
+    return max(1, n)
+
+
+def _parse_token_per_page(per_page: Any) -> tuple[int, bool]:
+    v = str(per_page if per_page is not None else "").strip().lower()
+    if v in ("all", "全部"):
+        return TOKEN_PAGE_ALL_LIMIT, True
+    try:
+        n = int(v or TOKEN_PAGE_DEFAULT)
+    except Exception:
+        return TOKEN_PAGE_DEFAULT, False
+    if n not in TOKEN_PAGE_ALLOWED:
+        return TOKEN_PAGE_DEFAULT, False
+    return n, False
+
+
+def _is_token_invalid(item: dict) -> bool:
+    return str(item.get("status") or "").strip().lower() in ("invalid", "expired", "disabled")
+
+
+def _is_token_exhausted(item: dict) -> bool:
+    status = str(item.get("status") or "").strip().lower()
+    if status == "cooling":
+        return True
+    try:
+        quota_known = bool(item.get("quota_known"))
+        quota = int(item.get("quota"))
+    except Exception:
+        quota_known = False
+        quota = -1
+    if quota_known and quota <= 0:
+        return True
+
+    token_type = str(item.get("token_type") or "sso")
+    try:
+        heavy_known = bool(item.get("heavy_quota_known"))
+        heavy_quota = int(item.get("heavy_quota"))
+    except Exception:
+        heavy_known = False
+        heavy_quota = -1
+    if token_type == "ssoSuper" and heavy_known and heavy_quota <= 0:
+        return True
+    return False
+
+
+def _is_token_active(item: dict) -> bool:
+    return (not _is_token_invalid(item)) and (not _is_token_exhausted(item))
+
+
+def _match_token_status(item: dict, status: str) -> bool:
+    s = str(status or "").strip().lower()
+    if not s:
+        return True
+    if s in ("invalid", "失效"):
+        return _is_token_invalid(item)
+    if s in ("active", "正常"):
+        return _is_token_active(item)
+    if s in ("exhausted", "额度耗尽", "limited", "限流中"):
+        return _is_token_exhausted(item)
+    if s in ("cooling", "冷却中"):
+        return str(item.get("status") or "").strip().lower() == "cooling"
+    if s in ("unused", "未使用"):
+        try:
+            quota = int(item.get("quota"))
+        except Exception:
+            quota = -2
+        return quota == -1
+    return True
+
+
+def _match_token_nsfw(item: dict, nsfw: str) -> bool:
+    v = str(nsfw or "").strip().lower()
+    if not v:
+        return True
+    note = str(item.get("note") or "").lower()
+    has_nsfw = "nsfw" in note
+    if v in ("1", "true", "yes", "on", "enabled"):
+        return has_nsfw
+    if v in ("0", "false", "no", "off", "disabled"):
+        return not has_nsfw
+    return True
+
+
+def _filter_admin_tokens(items: list[dict], *, token_type: str, status: str, nsfw: str, search: str) -> list[dict]:
+    token_type_norm = str(token_type or "all").strip()
+    search_norm = str(search or "").strip().lower()
+
+    out: list[dict] = []
+    for item in items:
+        cur_type = str(item.get("token_type") or "sso")
+        if token_type_norm in ("sso", "ssoSuper") and cur_type != token_type_norm:
+            continue
+        if not _match_token_status(item, status):
+            continue
+        if not _match_token_nsfw(item, nsfw):
+            continue
+        if search_norm:
+            token = str(item.get("token") or "").lower()
+            note = str(item.get("note") or "").lower()
+            if search_norm not in token and search_norm not in note:
+                continue
+        out.append(item)
+    return out
+
+
 def _collect_tokens_from_pool_payload(payload: Any) -> list[str]:
     if not isinstance(payload, dict):
         return []
@@ -675,12 +790,20 @@ async def get_storage_info():
     return {"type": storage_type or "local"}
 
 @router.get("/api/v1/admin/tokens", dependencies=[Depends(verify_api_key)])
-async def get_tokens_api():
+async def get_tokens_api(
+    page: int = Query(default=1),
+    per_page: str = Query(default="30"),
+    token_type: str = Query(default="all"),
+    status: str = Query(default=""),
+    nsfw: str = Query(default=""),
+    search: str = Query(default=""),
+):
     """获取所有 Token"""
     storage = get_storage()
     tokens = await storage.load_tokens()
     data = tokens if isinstance(tokens, dict) else {}
     out: dict[str, list[dict]] = {}
+    normalized_items: list[dict] = []
     for pool_name, raw_items in data.items():
         arr = raw_items if isinstance(raw_items, list) else []
         normalized: list[dict] = []
@@ -688,8 +811,43 @@ async def get_tokens_api():
             obj = _normalize_admin_token_item(pool_name, item)
             if obj:
                 normalized.append(obj)
+                normalized_items.append({**obj, "pool": str(pool_name)})
         out[str(pool_name)] = normalized
-    return out
+
+    current_page = _parse_token_page(page)
+    page_size, is_all = _parse_token_per_page(per_page)
+    filtered = _filter_admin_tokens(
+        normalized_items,
+        token_type=token_type,
+        status=status,
+        nsfw=nsfw,
+        search=search,
+    )
+
+    total = len(filtered)
+    pages = max(1, (total + page_size - 1) // page_size)
+    if current_page > pages:
+        current_page = pages
+    start = (current_page - 1) * page_size
+    end = start + page_size
+    page_items = filtered[start:end]
+
+    page_pools: dict[str, list[dict]] = {"ssoBasic": [], "ssoSuper": []}
+    for item in page_items:
+        pool = str(item.get("pool") or "ssoBasic")
+        obj = dict(item)
+        obj.pop("pool", None)
+        page_pools.setdefault(pool, []).append(obj)
+
+    return {
+        "items": page_items,
+        "total": total,
+        "page": current_page,
+        "per_page": "all" if is_all else page_size,
+        "pages": pages,
+        "ssoBasic": page_pools.get("ssoBasic", []),
+        "ssoSuper": page_pools.get("ssoSuper", []),
+    }
 
 @router.post("/api/v1/admin/tokens", dependencies=[Depends(verify_api_key)])
 async def update_tokens_api(data: dict):

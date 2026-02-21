@@ -27,9 +27,11 @@ import {
   deleteTokens,
   getAllTags,
   listTokens,
+  listTokensPaged,
   recordTokenFailure,
   selectBestToken,
   tokenRowToInfo,
+  type TokenListFilters,
   updateTokenNote,
   updateTokenTags,
   updateTokenLimits,
@@ -177,6 +179,42 @@ function legacyOk(data: Record<string, unknown> = {}): Record<string, unknown> {
 
 function legacyErr(message: string): Record<string, unknown> {
   return { status: "error", error: message };
+}
+
+const TOKEN_PAGE_DEFAULT = 30;
+const TOKEN_PAGE_ALLOWED = new Set([30, 50, 200]);
+const TOKEN_PAGE_ALL_LIMIT = 10000;
+
+function parseTokenPage(raw: string | undefined): number {
+  const n = Number(raw ?? 1);
+  if (!Number.isFinite(n)) return 1;
+  return Math.max(1, Math.floor(n));
+}
+
+function parseTokenPerPage(raw: string | undefined): { perPage: number; all: boolean } {
+  const v = String(raw ?? "").trim().toLowerCase();
+  if (v === "all" || v === "全部") {
+    return { perPage: TOKEN_PAGE_ALL_LIMIT, all: true };
+  }
+  const n = Number(v || TOKEN_PAGE_DEFAULT);
+  if (!Number.isFinite(n)) {
+    return { perPage: TOKEN_PAGE_DEFAULT, all: false };
+  }
+  const normalized = Math.floor(n);
+  if (!TOKEN_PAGE_ALLOWED.has(normalized)) {
+    return { perPage: TOKEN_PAGE_DEFAULT, all: false };
+  }
+  return { perPage: normalized, all: false };
+}
+
+function parseTokenListFilters(c: any): TokenListFilters {
+  const type = String(c.req.query("type") ?? c.req.query("token_type") ?? "all").trim();
+  const token_type = type === "sso" || type === "ssoSuper" ? type : "all";
+  const status = String(c.req.query("status") ?? "").trim();
+  const nsfw = String(c.req.query("nsfw") ?? "").trim();
+  const search = String(c.req.query("search") ?? c.req.query("q") ?? "").trim();
+  const tag = String(c.req.query("tag") ?? "").trim();
+  return { token_type, status, nsfw, search, tag };
 }
 
 function toPoolName(tokenType: "sso" | "ssoSuper"): "ssoBasic" | "ssoSuper" {
@@ -599,11 +637,18 @@ adminRoutes.get("/api/v1/admin/imagine/ws", async (c) => {
 
 adminRoutes.get("/api/v1/admin/tokens", requireAdminAuth, async (c) => {
   try {
-    const rows = await listTokens(c.env.DB);
+    const page = parseTokenPage(c.req.query("page"));
+    const perPageParsed = parseTokenPerPage(c.req.query("per_page") ?? c.req.query("limit") ?? c.req.query("size"));
+    const perPage = perPageParsed.perPage;
+    const offset = (page - 1) * perPage;
+    const filters = parseTokenListFilters(c);
+
+    const { total, items } = await listTokensPaged(c.env.DB, perPage, offset, filters);
     const now = nowMs();
 
     const out: Record<"ssoBasic" | "ssoSuper", any[]> = { ssoBasic: [], ssoSuper: [] };
-    for (const r of rows) {
+    const normalizedItems: any[] = [];
+    for (const r of items) {
       const pool = toPoolName(r.token_type);
       const isCooling = Boolean(r.cooldown_until && r.cooldown_until > now);
       const status = r.status === "expired" ? "invalid" : isCooling ? "cooling" : "active";
@@ -612,7 +657,7 @@ adminRoutes.get("/api/v1/admin/tokens", requireAdminAuth, async (c) => {
       const heavyQuotaKnown =
         r.token_type === "ssoSuper" && Number.isFinite(r.heavy_remaining_queries) && r.heavy_remaining_queries >= 0;
       const heavyQuota = heavyQuotaKnown ? r.heavy_remaining_queries : -1;
-      out[pool].push({
+      const row = {
         token: `sso=${r.token}`,
         status,
         quota,
@@ -623,9 +668,21 @@ adminRoutes.get("/api/v1/admin/tokens", requireAdminAuth, async (c) => {
         note: r.note ?? "",
         fail_count: r.failed_count ?? 0,
         use_count: 0,
-      });
+      };
+      out[pool].push(row);
+      normalizedItems.push({ ...row, pool });
     }
-    return c.json(out);
+
+    const pages = Math.max(1, Math.ceil(total / perPage));
+    return c.json({
+      items: normalizedItems,
+      total,
+      page,
+      per_page: perPageParsed.all ? "all" : perPage,
+      pages,
+      ssoBasic: out.ssoBasic,
+      ssoSuper: out.ssoSuper,
+    });
   } catch (e) {
     return c.json(legacyErr(`Get tokens failed: ${e instanceof Error ? e.message : String(e)}`), 500);
   }
@@ -958,9 +1015,24 @@ adminRoutes.get("/api/storage/mode", requireAdminAuth, async (c) => {
 
 adminRoutes.get("/api/tokens", requireAdminAuth, async (c) => {
   try {
-    const rows = await listTokens(c.env.DB);
-    const infos = rows.map(tokenRowToInfo);
-    return c.json({ success: true, data: infos, total: infos.length });
+    const page = parseTokenPage(c.req.query("page"));
+    const perPageParsed = parseTokenPerPage(c.req.query("per_page") ?? c.req.query("limit") ?? c.req.query("size"));
+    const perPage = perPageParsed.perPage;
+    const offset = (page - 1) * perPage;
+    const filters = parseTokenListFilters(c);
+
+    const { total, items } = await listTokensPaged(c.env.DB, perPage, offset, filters);
+    const infos = items.map(tokenRowToInfo);
+    const pages = Math.max(1, Math.ceil(total / perPage));
+    return c.json({
+      success: true,
+      data: infos,
+      items: infos,
+      total,
+      page,
+      per_page: perPageParsed.all ? "all" : perPage,
+      pages,
+    });
   } catch (e) {
     return c.json(jsonError(`获取失败: ${e instanceof Error ? e.message : String(e)}`, "TOKENS_LIST_ERROR"), 500);
   }
@@ -1547,6 +1619,11 @@ adminRoutes.post("/api/logs/add", requireAdminAuth, async (c) => {
       status: Number(body.status ?? 200),
       key_name: "admin",
       token_suffix: "",
+      total_tokens: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      reasoning_tokens: 0,
+      cached_tokens: 0,
       error: String(body.error ?? ""),
     });
     return c.json({ success: true });

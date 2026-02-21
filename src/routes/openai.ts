@@ -9,6 +9,7 @@ import { uploadImage } from "../grok/upload";
 import { getDynamicHeaders } from "../grok/headers";
 import { createMediaPost, createPost } from "../grok/create";
 import { createOpenAiStreamFromGrokNdjson, parseOpenAiFromGrokNdjson } from "../grok/processor";
+import { buildChatUsageFromTexts, buildImageUsageFromPrompt, estimateInputTokensFromMessages, estimateTokens } from "../utils/token_usage";
 import {
   IMAGE_METHOD_IMAGINE_WS_EXPERIMENTAL,
   generateImagineWs,
@@ -25,6 +26,9 @@ import { nextLocalMidnightExpirationSeconds } from "../kv/cleanup";
 import { nowMs } from "../utils/time";
 import { arrayBufferToBase64 } from "../utils/base64";
 import { upsertCacheRow } from "../repo/cache";
+
+const IMAGE_GENERATION_MODEL_ID = "grok-imagine-1.0";
+const IMAGE_EDIT_MODEL_ID = "grok-imagine-1.0-edit";
 
 function openAiError(message: string, code: string): Record<string, unknown> {
   return { error: { message, type: "invalid_request_error", code } };
@@ -360,6 +364,7 @@ function createImageEventStream(args: {
   cookie: string;
   settings: Awaited<ReturnType<typeof getSettings>>["grok"];
   n: number;
+  prompt: string;
   onFinish?: (result: { status: number; duration: number }) => Promise<void> | void;
 }): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -446,6 +451,7 @@ function createImageEventStream(args: {
           }
         }
 
+        const usageBase = buildImageUsageFromPrompt(args.prompt);
         for (let i = 0; i < finalImages.length; i++) {
           if (args.n === 1 && i !== targetIndex) continue;
           const outIndex = args.n === 1 ? 0 : i;
@@ -456,10 +462,10 @@ function createImageEventStream(args: {
                 [responseField]: finalImages[i] ?? "",
                 index: outIndex,
                 usage: {
-                  total_tokens: 50,
-                  input_tokens: 25,
-                  output_tokens: 25,
-                  input_tokens_details: { text_tokens: 5, image_tokens: 20 },
+                  total_tokens: usageBase.total_tokens,
+                  input_tokens: usageBase.input_tokens,
+                  output_tokens: usageBase.output_tokens,
+                  input_tokens_details: usageBase.input_tokens_details,
                 },
               }),
             ),
@@ -495,29 +501,49 @@ function getTokenSuffix(token: string): string {
   return token.length >= 6 ? token.slice(-6) : token;
 }
 
-const IMAGE_GENERATION_MODEL_ID = "grok-imagine-1.0";
-const IMAGE_EDIT_MODEL_ID = "grok-imagine-1.0-edit";
-
-function parseImageCount(input: unknown): number {
-  const raw = Number(input ?? 1);
-  if (!Number.isFinite(raw)) return 1;
-  return Math.max(1, Math.min(10, Math.floor(raw)));
-}
-
-function parseImagePrompt(input: unknown): string {
-  return String(input ?? "").trim();
-}
-
 function parseImageModel(input: unknown, fallback: string): string {
   return String(input ?? fallback).trim() || fallback;
 }
 
-function parseImageStream(input: unknown): boolean {
-  return toBool(input);
+function parseImagePrompt(input: unknown): string {
+  if (input === undefined || input === null) return "";
+  if (typeof input === "string") return input.trim();
+  if (Array.isArray(input)) return input.map((v) => String(v ?? "")).join(" ").trim();
+  return String(input).trim();
+}
+
+function parseImageCount(input: unknown): number {
+  const raw = Number(input);
+  if (!Number.isFinite(raw)) return 1;
+  const value = Math.floor(raw);
+  return Math.max(1, Math.min(10, value));
 }
 
 function parseImageSize(input: unknown): string {
-  return String(input ?? "1024x1024").trim() || "1024x1024";
+  const value = String(input ?? "").trim().toLowerCase();
+  if (!value) return "1024x1024";
+  const allowed = new Set([
+    "256x256",
+    "512x512",
+    "1024x1024",
+    "1024x576",
+    "1280x720",
+    "1536x864",
+    "576x1024",
+    "720x1280",
+    "864x1536",
+    "1024x1536",
+    "512x768",
+    "768x1024",
+    "1536x1024",
+    "768x512",
+    "1024x768",
+  ]);
+  return allowed.has(value) ? value : "1024x1024";
+}
+
+function parseImageStream(input: unknown): boolean {
+  return toBool(input);
 }
 
 function parseImageConcurrencyOrError(
@@ -702,6 +728,7 @@ async function runExperimentalImageEditCall(args: {
 function createSyntheticImageEventStream(args: {
   selected: string[];
   responseField: ImageResponseFormat;
+  prompt: string;
   onFinish?: (result: { status: number; duration: number }) => Promise<void> | void;
 }): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -711,11 +738,11 @@ function createSyntheticImageEventStream(args: {
       const startedAt = Date.now();
       try {
         let emitted = false;
+        const usageBase = buildImageUsageFromPrompt(args.prompt);
         for (let i = 0; i < args.selected.length; i++) {
           const value = args.selected[i];
           if (!value || value === "error") continue;
           emitted = true;
-
           controller.enqueue(
             encoder.encode(
               buildImageSse("image_generation.partial_image", {
@@ -733,10 +760,10 @@ function createSyntheticImageEventStream(args: {
                 [args.responseField]: value,
                 index: i,
                 usage: {
-                  total_tokens: 50,
-                  input_tokens: 25,
-                  output_tokens: 25,
-                  input_tokens_details: { text_tokens: 5, image_tokens: 20 },
+                  total_tokens: usageBase.total_tokens,
+                  input_tokens: usageBase.input_tokens,
+                  output_tokens: usageBase.output_tokens,
+                  input_tokens_details: usageBase.input_tokens_details,
                 },
               }),
             ),
@@ -778,6 +805,7 @@ function createSyntheticImageEventStream(args: {
 function createStreamErrorImageEventStream(args: {
   message: string;
   responseField: ImageResponseFormat;
+  prompt: string;
   onFinish?: (result: { status: number; duration: number }) => Promise<void> | void;
 }): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -793,6 +821,7 @@ function createStreamErrorImageEventStream(args: {
             }),
           ),
         );
+        const usageBase = buildImageUsageFromPrompt(args.prompt);
         controller.enqueue(
           encoder.encode(
             buildImageSse("image_generation.completed", {
@@ -803,7 +832,7 @@ function createStreamErrorImageEventStream(args: {
                 total_tokens: 0,
                 input_tokens: 0,
                 output_tokens: 0,
-                input_tokens_details: { text_tokens: 0, image_tokens: 0 },
+                input_tokens_details: usageBase.input_tokens_details,
               },
             }),
           ),
@@ -858,6 +887,7 @@ function createExperimentalImageEventStream(args: {
         );
       };
 
+      const usageBase = buildImageUsageFromPrompt(args.prompt);
       const emitCompleted = (index: number, value: string) => {
         if (index < 0 || index >= safeN) return;
         if (completedByIndex.has(index)) return;
@@ -871,12 +901,12 @@ function createExperimentalImageEventStream(args: {
               [args.responseField]: finalValue,
               index,
               usage: {
-                total_tokens: isError ? 0 : 50,
-                input_tokens: isError ? 0 : 25,
-                output_tokens: isError ? 0 : 25,
+                total_tokens: isError ? 0 : usageBase.total_tokens,
+                input_tokens: isError ? 0 : usageBase.input_tokens,
+                output_tokens: isError ? 0 : usageBase.output_tokens,
                 input_tokens_details: {
-                  text_tokens: isError ? 0 : 5,
-                  image_tokens: isError ? 0 : 20,
+                  text_tokens: isError ? 0 : usageBase.input_tokens_details.text_tokens,
+                  image_tokens: isError ? 0 : usageBase.input_tokens_details.image_tokens,
                 },
               },
             }),
@@ -1026,12 +1056,14 @@ function invalidStreamNMessage(): string {
   return "Streaming is only supported when n=1 or n=2";
 }
 
-function imageUsagePayload(values: string[]) {
+function imageUsagePayload(values: string[], prompt: string) {
+  const base = buildImageUsageFromPrompt(prompt);
+  const successCount = values.filter((v) => v !== "error").length;
   return {
-    total_tokens: 0 * values.filter((v) => v !== "error").length,
-    input_tokens: 0,
-    output_tokens: 0 * values.filter((v) => v !== "error").length,
-    input_tokens_details: { text_tokens: 0, image_tokens: 0 },
+    total_tokens: base.total_tokens * Math.max(1, successCount),
+    input_tokens: base.input_tokens * Math.max(1, successCount),
+    output_tokens: base.output_tokens * Math.max(1, successCount),
+    input_tokens_details: base.input_tokens_details,
   };
 }
 
@@ -1039,11 +1071,11 @@ function createdTs(): number {
   return Math.floor(Date.now() / 1000);
 }
 
-function buildImageJsonPayload(field: ImageResponseFormat, values: string[]) {
+function buildImageJsonPayload(field: ImageResponseFormat, values: string[], prompt: string) {
   return {
     created: createdTs(),
     data: imageResponseData(field, values),
-    usage: imageUsagePayload(values),
+    usage: imageUsagePayload(values, prompt),
   };
 }
 
@@ -1056,8 +1088,10 @@ async function recordImageLog(args: {
   status: number;
   tokenSuffix?: string;
   error: string;
+  prompt?: string;
 }) {
   const duration = (Date.now() - args.start) / 1000;
+  const usage = args.prompt ? buildImageUsageFromPrompt(args.prompt) : null;
   await addRequestLog(args.env.DB, {
     ip: args.ip,
     model: args.model,
@@ -1065,6 +1099,11 @@ async function recordImageLog(args: {
     status: args.status,
     key_name: args.keyName,
     token_suffix: args.tokenSuffix ?? "",
+    total_tokens: usage?.total_tokens ?? 0,
+    input_tokens: usage?.input_tokens ?? 0,
+    output_tokens: usage?.output_tokens ?? 0,
+    reasoning_tokens: 0,
+    cached_tokens: 0,
     error: args.error,
   });
 }
@@ -1250,6 +1289,7 @@ openAiRoutes.post("/chat/completions", async (c) => {
       const { content, images } = extractContent(body.messages as any);
       const isVideoModel = Boolean(cfg.is_video_model);
       const imgInputs = isVideoModel && images.length > 1 ? images.slice(0, 1) : images;
+      const promptMessages = body.messages as Array<{ content?: unknown }>;
 
       try {
         const uploads = await mapLimit(imgInputs, 5, (u) => uploadImage(u, cookie, settingsBundle.grok));
@@ -1303,8 +1343,15 @@ openAiRoutes.post("/chat/completions", async (c) => {
             settings: settingsBundle.grok,
             global: settingsBundle.global,
             origin,
+            promptMessages,
             requestedModel,
-            onFinish: async ({ status, duration }) => {
+            onFinish: async ({ status, duration, usage }) => {
+              const promptEst = estimateInputTokensFromMessages(promptMessages);
+              const resolved = usage ?? buildChatUsageFromTexts({
+                promptTextTokens: promptEst.textTokens,
+                promptImageTokens: promptEst.imageTokens,
+                completionText: "",
+              });
               await addRequestLog(c.env.DB, {
                 ip,
                 model: requestedModel,
@@ -1312,6 +1359,11 @@ openAiRoutes.post("/chat/completions", async (c) => {
                 status,
                 key_name: keyName,
                 token_suffix: jwt.slice(-6),
+                total_tokens: resolved.total_tokens,
+                input_tokens: resolved.input_tokens,
+                output_tokens: resolved.output_tokens,
+                reasoning_tokens: resolved.reasoning_tokens,
+                cached_tokens: resolved.cached_tokens,
                 error: status === 200 ? "" : "stream_error",
               });
             },
@@ -1335,9 +1387,12 @@ openAiRoutes.post("/chat/completions", async (c) => {
           global: settingsBundle.global,
           origin,
           requestedModel,
+          promptMessages,
         });
 
         const duration = (Date.now() - start) / 1000;
+        const usage = (json as any).usage as any;
+        const raw = usage?.completion_tokens_details ? usage : null;
         await addRequestLog(c.env.DB, {
           ip,
           model: requestedModel,
@@ -1345,6 +1400,11 @@ openAiRoutes.post("/chat/completions", async (c) => {
           status: 200,
           key_name: keyName,
           token_suffix: jwt.slice(-6),
+          total_tokens: Number(raw?.total_tokens ?? 0),
+          input_tokens: Number(raw?.prompt_tokens ?? 0),
+          output_tokens: Number(raw?.completion_tokens ?? 0),
+          reasoning_tokens: Number(raw?.completion_tokens_details?.reasoning_tokens ?? 0),
+          cached_tokens: Number(raw?.prompt_tokens_details?.cached_tokens ?? 0),
           error: "",
         });
 
@@ -1366,6 +1426,11 @@ openAiRoutes.post("/chat/completions", async (c) => {
       status: 500,
       key_name: keyName,
       token_suffix: "",
+      total_tokens: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      reasoning_tokens: 0,
+      cached_tokens: 0,
       error: lastErr ?? "unknown_error",
     });
 
@@ -1379,6 +1444,11 @@ openAiRoutes.post("/chat/completions", async (c) => {
       status: 500,
       key_name: keyName,
       token_suffix: "",
+      total_tokens: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      reasoning_tokens: 0,
+      cached_tokens: 0,
       error: e instanceof Error ? e.message : String(e),
     });
     return c.json(openAiError("Internal error", "internal_error"), 500);
@@ -1391,6 +1461,7 @@ openAiRoutes.post("/images/generations", async (c) => {
   const keyName = c.get("apiAuth").name ?? "Unknown";
   const origin = new URL(c.req.url).origin;
 
+  let prompt = "";
   let requestedModel = IMAGE_GENERATION_MODEL_ID;
   try {
     const body = (await c.req.json()) as {
@@ -1402,7 +1473,7 @@ openAiRoutes.post("/images/generations", async (c) => {
       stream?: unknown;
       response_format?: unknown;
     };
-    const prompt = parseImagePrompt(body.prompt);
+    prompt = parseImagePrompt(body.prompt);
     const promptErr = nonEmptyPromptOrError(prompt);
     if (promptErr) return c.json(openAiError(promptErr.message, promptErr.code), 400);
 
@@ -1476,6 +1547,11 @@ openAiRoutes.post("/images/generations", async (c) => {
                 status,
                 key_name: keyName,
                 token_suffix: getTokenSuffix(experimentalToken.token),
+                total_tokens: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                reasoning_tokens: 0,
+                cached_tokens: 0,
                 error: status === 200 ? "" : "stream_error",
               });
             },
@@ -1494,11 +1570,13 @@ openAiRoutes.post("/images/generations", async (c) => {
           keyName,
           status: 503,
           error: "NO_AVAILABLE_TOKEN",
+          prompt: imageCallPrompt("generation", prompt),
         });
         return new Response(
           createStreamErrorImageEventStream({
             message: "No available token",
             responseField,
+            prompt: imageCallPrompt("generation", prompt),
           }),
           { status: 200, headers: streamHeaders() },
         );
@@ -1525,6 +1603,7 @@ openAiRoutes.post("/images/generations", async (c) => {
           status: upstream.status,
           tokenSuffix: getTokenSuffix(chosen.token),
           error: txt.slice(0, 200),
+          prompt: imageCallPrompt("generation", prompt),
         });
         return new Response(
           createStreamErrorImageEventStream({
@@ -1532,6 +1611,7 @@ openAiRoutes.post("/images/generations", async (c) => {
               ? txt.slice(0, 500)
               : `Upstream ${upstream.status}`,
             responseField,
+            prompt: imageCallPrompt("generation", prompt),
           }),
           { status: 200, headers: streamHeaders() },
         );
@@ -1544,6 +1624,7 @@ openAiRoutes.post("/images/generations", async (c) => {
         cookie,
         settings: settingsBundle.grok,
         n,
+        prompt: imageCallPrompt("generation", prompt),
         onFinish: async ({ status, duration }) => {
           await addRequestLog(c.env.DB, {
             ip,
@@ -1552,6 +1633,11 @@ openAiRoutes.post("/images/generations", async (c) => {
             status,
             key_name: keyName,
             token_suffix: getTokenSuffix(chosen.token),
+            total_tokens: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            reasoning_tokens: 0,
+            cached_tokens: 0,
             error: status === 200 ? "" : "stream_error",
           });
         },
@@ -1584,8 +1670,9 @@ openAiRoutes.post("/images/generations", async (c) => {
             status: 200,
             tokenSuffix: getTokenSuffix(experimentalToken.token),
             error: "",
+            prompt: imageCallPrompt("generation", prompt),
           });
-          return c.json(buildImageJsonPayload(responseField, selected));
+          return c.json(buildImageJsonPayload(responseField, selected, imageCallPrompt("generation", prompt)));
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           await recordTokenFailure(c.env.DB, experimentalToken.token, 500, msg.slice(0, 200));
@@ -1600,26 +1687,26 @@ openAiRoutes.post("/images/generations", async (c) => {
       Array.from({ length: calls }),
       Math.min(calls, Math.max(1, concurrency)),
       async () => {
-      const chosen = await selectBestToken(c.env.DB, requestedModel);
-      if (!chosen) throw new Error("No available token");
-      const cookie = buildCookie(chosen.token, cf);
-      try {
-        return await runImageCall({
-          requestModel: requestedModel,
-          prompt: imageCallPrompt("generation", prompt),
-          fileIds: [],
-          cookie,
-          settings: settingsBundle.grok,
-          responseFormat,
-          baseUrl,
-        });
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        await recordTokenFailure(c.env.DB, chosen.token, 500, msg.slice(0, 200));
-        await applyCooldown(c.env.DB, chosen.token, 500);
-        throw e;
-      }
-    },
+        const chosen = await selectBestToken(c.env.DB, requestedModel);
+        if (!chosen) throw new Error("No available token");
+        const cookie = buildCookie(chosen.token, cf);
+        try {
+          return await runImageCall({
+            requestModel: requestedModel,
+            prompt: imageCallPrompt("generation", prompt),
+            fileIds: [],
+            cookie,
+            settings: settingsBundle.grok,
+            responseFormat,
+            baseUrl,
+          });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          await recordTokenFailure(c.env.DB, chosen.token, 500, msg.slice(0, 200));
+          await applyCooldown(c.env.DB, chosen.token, 500);
+          throw e;
+        }
+      },
     );
     const urls = dedupeImages(urlsNested.flat().filter(Boolean));
     const selected = pickImageResults(urls, n);
@@ -1632,9 +1719,10 @@ openAiRoutes.post("/images/generations", async (c) => {
       keyName,
       status: 200,
       error: "",
+      prompt: imageCallPrompt("generation", prompt),
     });
 
-    return c.json(buildImageJsonPayload(responseField, selected));
+    return c.json(buildImageJsonPayload(responseField, selected, imageCallPrompt("generation", prompt)));
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     if (isContentModerationMessage(message)) {
@@ -1646,6 +1734,7 @@ openAiRoutes.post("/images/generations", async (c) => {
         keyName,
         status: 400,
         error: message,
+        prompt: imageCallPrompt("generation", prompt || ""),
       });
       return c.json(openAiError(message, "content_policy_violation"), 400);
     }
@@ -1657,6 +1746,7 @@ openAiRoutes.post("/images/generations", async (c) => {
       keyName,
       status: 500,
       error: message,
+      prompt: imageCallPrompt("generation", prompt || ""),
     });
     return c.json(openAiError(message || "Internal error", "internal_error"), 500);
   }
@@ -1669,10 +1759,11 @@ openAiRoutes.post("/images/edits", async (c) => {
   const origin = new URL(c.req.url).origin;
   const maxImageBytes = 50 * 1024 * 1024;
 
+  let prompt = "";
   let requestedModel = IMAGE_EDIT_MODEL_ID;
   try {
     const form = await c.req.formData();
-    const prompt = parseImagePrompt(form.get("prompt"));
+    prompt = parseImagePrompt(form.get("prompt"));
     const promptErr = nonEmptyPromptOrError(prompt);
     if (promptErr) return c.json(openAiError(promptErr.message, promptErr.code), 400);
 
@@ -1729,11 +1820,13 @@ openAiRoutes.post("/images/edits", async (c) => {
           keyName,
           status: 503,
           error: "NO_AVAILABLE_TOKEN",
+          prompt: imageCallPrompt("edit", prompt),
         });
         return new Response(
           createStreamErrorImageEventStream({
             message: "No available token",
             responseField,
+            prompt: imageCallPrompt("edit", prompt),
           }),
           { status: 200, headers: streamHeaders() },
         );
@@ -1785,6 +1878,7 @@ openAiRoutes.post("/images/edits", async (c) => {
             cookie,
             settings: settingsBundle.grok,
             n,
+            prompt: imageCallPrompt("edit", prompt),
             onFinish: async ({ status, duration }) => {
               await addRequestLog(c.env.DB, {
                 ip,
@@ -1793,6 +1887,11 @@ openAiRoutes.post("/images/edits", async (c) => {
                 status,
                 key_name: keyName,
                 token_suffix: getTokenSuffix(chosen.token),
+                total_tokens: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                reasoning_tokens: 0,
+                cached_tokens: 0,
                 error: status === 200 ? "" : "stream_error",
               });
             },
@@ -1826,6 +1925,7 @@ openAiRoutes.post("/images/edits", async (c) => {
           status: upstream.status,
           tokenSuffix: getTokenSuffix(chosen.token),
           error: txt.slice(0, 200),
+          prompt: imageCallPrompt("edit", prompt),
         });
         return new Response(
           createStreamErrorImageEventStream({
@@ -1833,6 +1933,7 @@ openAiRoutes.post("/images/edits", async (c) => {
               ? txt.slice(0, 500)
               : `Upstream ${upstream.status}`,
             responseField,
+            prompt: imageCallPrompt("edit", prompt),
           }),
           { status: 200, headers: streamHeaders() },
         );
@@ -1845,6 +1946,7 @@ openAiRoutes.post("/images/edits", async (c) => {
         cookie,
         settings: settingsBundle.grok,
         n,
+        prompt: imageCallPrompt("edit", prompt),
         onFinish: async ({ status, duration }) => {
           await addRequestLog(c.env.DB, {
             ip,
@@ -1853,6 +1955,11 @@ openAiRoutes.post("/images/edits", async (c) => {
             status,
             key_name: keyName,
             token_suffix: getTokenSuffix(chosen.token),
+            total_tokens: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            reasoning_tokens: 0,
+            cached_tokens: 0,
             error: status === 200 ? "" : "stream_error",
           });
         },
@@ -1886,8 +1993,9 @@ openAiRoutes.post("/images/edits", async (c) => {
           status: 200,
           tokenSuffix: getTokenSuffix(chosen.token),
           error: "",
+          prompt: imageCallPrompt("edit", prompt),
         });
-        return c.json(buildImageJsonPayload(responseField, selected));
+        return c.json(buildImageJsonPayload(responseField, selected, imageCallPrompt("edit", prompt)));
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         await recordTokenFailure(c.env.DB, chosen.token, 500, msg.slice(0, 200));
@@ -1920,9 +2028,10 @@ openAiRoutes.post("/images/edits", async (c) => {
       status: 200,
       tokenSuffix: getTokenSuffix(chosen.token),
       error: "",
+      prompt: imageCallPrompt("edit", prompt),
     });
 
-    return c.json(buildImageJsonPayload(responseField, selected));
+    return c.json(buildImageJsonPayload(responseField, selected, imageCallPrompt("edit", prompt)));
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     if (isContentModerationMessage(message)) {
@@ -1934,6 +2043,7 @@ openAiRoutes.post("/images/edits", async (c) => {
         keyName,
         status: 400,
         error: message,
+        prompt: imageCallPrompt("edit", prompt || ""),
       });
       return c.json(openAiError(message, "content_policy_violation"), 400);
     }
@@ -1945,6 +2055,7 @@ openAiRoutes.post("/images/edits", async (c) => {
       keyName,
       status: 500,
       error: message,
+      prompt: imageCallPrompt("edit", prompt || ""),
     });
     return c.json(openAiError(message || "Internal error", "internal_error"), 500);
   }

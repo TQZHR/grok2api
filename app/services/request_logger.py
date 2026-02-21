@@ -21,6 +21,11 @@ class RequestLog:
     status: int
     key_name: str
     token_suffix: str
+    total_tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+    cached_tokens: int = 0
     error: str = ""
 
 class RequestLogger:
@@ -95,6 +100,11 @@ class RequestLogger:
                      status: int, 
                      key_name: str, 
                      token_suffix: str = "",
+                     total_tokens: int = 0,
+                     input_tokens: int = 0,
+                     output_tokens: int = 0,
+                     reasoning_tokens: int = 0,
+                     cached_tokens: int = 0,
                      error: str = ""):
         """添加日志"""
         if not self._loaded:
@@ -115,6 +125,11 @@ class RequestLogger:
                 "status": status,
                 "key_name": key_name,
                 "token_suffix": token_suffix,
+                "total_tokens": int(total_tokens or 0),
+                "input_tokens": int(input_tokens or 0),
+                "output_tokens": int(output_tokens or 0),
+                "reasoning_tokens": int(reasoning_tokens or 0),
+                "cached_tokens": int(cached_tokens or 0),
                 "error": error
             }
             
