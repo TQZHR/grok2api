@@ -45,41 +45,49 @@ class ModelService:
             model_id="grok-3",
             grok_model="grok-3",
             rate_limit_model="grok-3",
-            model_mode="MODEL_MODE_AUTO",
+            model_mode="MODEL_MODE_GROK_3",
             cost=Cost.LOW,
             display_name="Grok 3"
         ),
         ModelInfo(
-            model_id="grok-3-fast",
+            model_id="grok-3-mini",
             grok_model="grok-3",
             rate_limit_model="grok-3",
+            model_mode="MODEL_MODE_GROK_3_MINI_THINKING",
             cost=Cost.LOW,
-            model_mode="MODEL_MODE_FAST",
-            display_name="Grok 3 Fast"
+            display_name="Grok 3 Mini"
+        ),
+        ModelInfo(
+            model_id="grok-3-thinking",
+            grok_model="grok-3",
+            rate_limit_model="grok-3",
+            model_mode="MODEL_MODE_GROK_3_THINKING",
+            cost=Cost.LOW,
+            display_name="Grok 3 Thinking"
         ),
         ModelInfo(
             model_id="grok-4",
             grok_model="grok-4",
             rate_limit_model="grok-4",
-            model_mode="MODEL_MODE_AUTO",
+            model_mode="MODEL_MODE_GROK_4",
             cost=Cost.LOW,
             display_name="Grok 4"
         ),
         ModelInfo(
             model_id="grok-4-mini",
-            grok_model="grok-4-mini-thinking-tahoe",
-            rate_limit_model="grok-4-mini-thinking-tahoe",
+            grok_model="grok-4-mini",
+            rate_limit_model="grok-4-mini",
             model_mode="MODEL_MODE_GROK_4_MINI_THINKING",
             cost=Cost.LOW,
             display_name="Grok 4 Mini"
         ),
         ModelInfo(
-            model_id="grok-4-fast",
+            model_id="grok-4-thinking",
             grok_model="grok-4",
             rate_limit_model="grok-4",
-            model_mode="MODEL_MODE_FAST",
+            model_mode="MODEL_MODE_GROK_4_THINKING",
             cost=Cost.LOW,
-            display_name="Grok 4 Fast"
+            display_name="Grok 4 Thinking"
         ),
         ModelInfo(
             model_id="grok-4-heavy",
@@ -91,12 +99,12 @@ class ModelService:
             display_name="Grok 4 Heavy"
         ),
         ModelInfo(
-            model_id="grok-4.1",
+            model_id="grok-4.1-mini",
             grok_model="grok-4-1-thinking-1129",
             rate_limit_model="grok-4-1-thinking-1129",
-            model_mode="MODEL_MODE_AUTO",
+            model_mode="MODEL_MODE_GROK_4_1_MINI_THINKING",
             cost=Cost.LOW,
-            display_name="Grok 4.1"
+            display_name="Grok 4.1 Mini"
         ),
         ModelInfo(
             model_id="grok-4.1-fast",
@@ -111,7 +119,7 @@ class ModelService:
             grok_model="grok-4-1-thinking-1129",
             rate_limit_model="grok-4-1-thinking-1129",
             model_mode="MODEL_MODE_EXPERT",
-            cost=Cost.LOW,
+            cost=Cost.HIGH,
             display_name="Grok 4.1 Expert"
         ),
         ModelInfo(
@@ -121,6 +129,14 @@ class ModelService:
             model_mode="MODEL_MODE_GROK_4_1_THINKING",
             cost=Cost.HIGH, 
             display_name="Grok 4.1 Thinking"
+        ),
+        ModelInfo(
+            model_id="grok-4.20-beta",
+            grok_model="grok-420",
+            rate_limit_model="grok-420",
+            model_mode="MODEL_MODE_GROK_420",
+            cost=Cost.LOW,
+            display_name="Grok 4.20 Beta"
         ),
         ModelInfo(
             model_id="grok-imagine-1.0",

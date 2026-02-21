@@ -207,7 +207,7 @@ mediaRoutes.get("/images/:imgPath{.+}", async (c) => {
   c.executionCtx.waitUntil(deleteCacheRow(c.env.DB, key));
 
   const settingsBundle = await getSettings(c.env);
-  const chosen = await selectBestToken(c.env.DB, "grok-4-fast");
+  const chosen = await selectBestToken(c.env.DB, "grok-4");
   if (!chosen) return c.text("No available token", 503);
 
   const cf = normalizeCfCookie(settingsBundle.grok.cf_clearance ?? "");

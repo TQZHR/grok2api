@@ -19,7 +19,7 @@ def test_chat_completion():
     }
     
     payload = {
-        "model": "grok-4-fast",
+        "model": "grok-4.20-beta",
         "messages": [
             {"role": "user", "content": "Hello, who are you? Tell me a joke."}
         ],

@@ -1344,6 +1344,7 @@ openAiRoutes.post("/chat/completions", async (c) => {
             global: settingsBundle.global,
             origin,
             promptMessages,
+            requestedModel,
             onFinish: async ({ status, duration, usage }) => {
               const promptEst = estimateInputTokensFromMessages(promptMessages);
               const resolved = usage ?? buildChatUsageFromTexts({

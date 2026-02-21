@@ -16,6 +16,8 @@ let imageContinuousActive = 0;
 let imageContinuousLastError = '';
 let imageContinuousRunToken = 0;
 let imageContinuousDesiredConcurrency = 1;
+const PREFERRED_CHAT_MODEL = 'grok-4.20-beta';
+let chatSending = false;
 
 function q(id) {
   return document.getElementById(id);
@@ -109,6 +111,108 @@ function showUserMsg(role, content) {
   return bubble;
 }
 
+function setChatSendingState(sending) {
+  chatSending = Boolean(sending);
+  const sendBtn = q('panel-chat')?.querySelector('button[onclick="sendChat()"]');
+  if (sendBtn) sendBtn.disabled = chatSending;
+  document.querySelectorAll('.chat-retry-btn').forEach((btn) => {
+    btn.disabled = chatSending;
+  });
+}
+
+function appendCacheBust(url) {
+  const raw = String(url || '').trim();
+  if (!raw || raw.startsWith('data:')) return raw;
+  try {
+    const parsed = new URL(raw, window.location.href);
+    parsed.searchParams.set('_retry', String(Date.now()));
+    return parsed.toString();
+  } catch (e) {
+    const sep = raw.includes('?') ? '&' : '?';
+    return `${raw}${sep}_retry=${Date.now()}`;
+  }
+}
+
+function retryImageFromButton(button) {
+  const src = String(button?.dataset?.src || '').trim();
+  const alt = String(button?.dataset?.alt || 'image').trim() || 'image';
+  if (!src || button.classList.contains('loading')) return;
+
+  button.classList.add('loading');
+  button.textContent = '重试中...';
+
+  const probe = new Image();
+  probe.onload = () => {
+    const img = document.createElement('img');
+    img.alt = alt;
+    img.src = probe.src;
+    bindRetryableImage(img);
+    button.replaceWith(img);
+  };
+  probe.onerror = () => {
+    button.classList.remove('loading');
+    button.textContent = '点击重试';
+  };
+  probe.src = appendCacheBust(src);
+}
+
+function bindRetryableImage(img) {
+  if (!img || img.dataset.retryBound === '1') return;
+  img.dataset.retryBound = '1';
+  img.addEventListener('error', () => {
+    const src = String(img.currentSrc || img.getAttribute('src') || '').trim();
+    if (!src || !img.isConnected) return;
+    const retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.className = 'img-retry';
+    retryBtn.textContent = '点击重试';
+    retryBtn.title = '图片加载失败，点击重试';
+    retryBtn.dataset.src = src;
+    retryBtn.dataset.alt = String(img.alt || 'image');
+    retryBtn.addEventListener('click', () => retryImageFromButton(retryBtn));
+    img.replaceWith(retryBtn);
+  });
+}
+
+function bindRetryableImages(root) {
+  if (!root) return;
+  root.querySelectorAll('img').forEach((img) => bindRetryableImage(img));
+}
+
+function attachAssistantRetryAction(bubbleEl) {
+  if (!bubbleEl || bubbleEl.querySelector('.msg-actions')) return;
+  const actions = document.createElement('div');
+  actions.className = 'msg-actions';
+  const retryBtn = document.createElement('button');
+  retryBtn.type = 'button';
+  retryBtn.className = 'chat-retry-btn';
+  retryBtn.textContent = '重试上一条回答';
+  retryBtn.title = '重试上一条回答';
+  retryBtn.disabled = chatSending;
+  retryBtn.addEventListener('click', retryLastAssistantAnswer);
+  actions.appendChild(retryBtn);
+  bubbleEl.appendChild(actions);
+}
+
+function findLastUserMessageIndex(messages) {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i]?.role === 'user') return i;
+  }
+  return -1;
+}
+
+function getSelectedChatModel() {
+  const sel = q('model-select');
+  const options = Array.from(sel?.options || [])
+    .map((opt) => String(opt.value || '').trim())
+    .filter(Boolean);
+  const current = String(sel?.value || '').trim();
+  if (current && options.includes(current)) return current;
+  const fallback = options.includes(PREFERRED_CHAT_MODEL) ? PREFERRED_CHAT_MODEL : (options[0] || '');
+  if (sel && fallback) sel.value = fallback;
+  return fallback;
+}
+
 function mdImagesToHtml(text) {
   return String(text).replace(/!\[[^\]]*]\(([^)]+)\)/g, (m, url) => {
     const safe = escapeHtml(String(url || '').trim());
@@ -191,6 +295,7 @@ function renderContent(container, content, forceText) {
     return;
   }
   container.innerHTML = html;
+  bindRetryableImages(container);
 }
 
 async function init() {
@@ -272,7 +377,7 @@ function renderAttachments(kind) {
   list.forEach((it, idx) => {
     const div = document.createElement('div');
     div.className = 'attach-item';
-    div.innerHTML = `<img src="${it.previewUrl}" alt="img"><button title="绉婚櫎">脳</button>`;
+    div.innerHTML = `<img src="${it.previewUrl}" alt="img"><button title="移除">×</button>`;
     div.querySelector('button').addEventListener('click', () => {
       try { URL.revokeObjectURL(it.previewUrl); } catch (e) {}
       list.splice(idx, 1);
@@ -424,6 +529,7 @@ function appendWaterfallImage(item, connectionIndex) {
     </div>
   `;
   waterfall.prepend(card);
+  bindRetryableImage(card.querySelector('img'));
 
   imageContinuousCount += 1;
   if (elapsed > 0) {
@@ -693,6 +799,7 @@ async function refreshImageGenerationMethod() {
 
 async function refreshModels() {
   const sel = q('model-select');
+  const previousValue = String(sel.value || '').trim();
   sel.innerHTML = '';
 
   const headers = buildApiHeaders();
@@ -718,18 +825,32 @@ async function refreshModels() {
       return !/imagine/i.test(id) || id === 'grok-4-heavy';
     });
 
+    const filteredIds = [];
     filtered.forEach((m) => {
       const opt = document.createElement('option');
       const id = String(m.id || '');
       const label = String(m.display_name || id);
+      filteredIds.push(id);
       opt.value = id;
       opt.textContent = `${label} (${id})`;
       sel.appendChild(opt);
     });
 
-    if (currentTab === 'image') sel.value = 'grok-imagine-1.0';
-    else if (currentTab === 'video') sel.value = 'grok-imagine-1.0-video';
-    else sel.value = sel.value || 'grok-4-fast';
+    if (currentTab === 'image') {
+      sel.value = filteredIds.includes('grok-imagine-1.0') ? 'grok-imagine-1.0' : (filteredIds[0] || '');
+      return;
+    }
+    if (currentTab === 'video') {
+      sel.value = filteredIds.includes('grok-imagine-1.0-video') ? 'grok-imagine-1.0-video' : (filteredIds[0] || '');
+      return;
+    }
+    if (previousValue && filteredIds.includes(previousValue)) {
+      sel.value = previousValue;
+    } else if (filteredIds.includes(PREFERRED_CHAT_MODEL)) {
+      sel.value = PREFERRED_CHAT_MODEL;
+    } else {
+      sel.value = filteredIds[0] || '';
+    }
   } catch (e) {
     showToast('加载模型失败: ' + (e?.message || e), 'error');
   }
@@ -793,16 +914,58 @@ async function uploadImages(files) {
   return uploaded.filter(Boolean);
 }
 
+async function retryLastAssistantAnswer() {
+  if (chatSending) return showToast('请求进行中，请稍候重试', 'warning');
+
+  const lastUserIndex = findLastUserMessageIndex(chatMessages);
+  if (lastUserIndex < 0) return showToast('没有可重试的回答', 'warning');
+
+  const retryMessages = chatMessages.slice(0, lastUserIndex + 1);
+  const model = getSelectedChatModel();
+  if (!model) return showToast('当前没有可用聊天模型', 'error');
+
+  const stream = Boolean(q('stream-toggle').checked);
+  const headers = { ...buildApiHeaders(), 'Content-Type': 'application/json' };
+  if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
+
+  const assistantBubble = showUserMsg('assistant', '');
+  setChatSendingState(true);
+  try {
+    const body = { model, messages: retryMessages, stream };
+    if (stream) {
+      const content = await streamChat(body, assistantBubble, false);
+      chatMessages = [...retryMessages, { role: 'assistant', content }];
+    } else {
+      const res = await fetch('/v1/chat/completions', { method: 'POST', headers, body: JSON.stringify(body) });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) throw new Error('API Key 无效或未授权');
+      if (!res.ok) throw new Error(data?.error?.message || data?.detail || `HTTP ${res.status}`);
+      const content = String(data?.choices?.[0]?.message?.content || '');
+      renderContent(assistantBubble, content, false);
+      chatMessages = [...retryMessages, { role: 'assistant', content }];
+    }
+    attachAssistantRetryAction(assistantBubble);
+  } catch (e) {
+    showToast('重试失败: ' + (e?.message || e), 'error');
+  } finally {
+    setChatSendingState(false);
+  }
+}
+
 async function sendChat() {
+  if (chatSending) return showToast('请求进行中，请稍候重试', 'warning');
+
   const prompt = String(q('chat-input').value || '').trim();
   if (!prompt && !chatAttachments.length) return showToast('请输入内容或上传图片', 'warning');
 
-  const model = String(q('model-select').value || '').trim();
+  const model = getSelectedChatModel();
+  if (!model) return showToast('当前没有可用聊天模型', 'error');
   const stream = Boolean(q('stream-toggle').checked);
 
   const headers = { ...buildApiHeaders(), 'Content-Type': 'application/json' };
   if (!headers.Authorization) return showToast('请先填写 API Key', 'warning');
 
+  setChatSendingState(true);
   try {
     let imgUrls = [];
     if (chatAttachments.length) {
@@ -829,20 +992,25 @@ async function sendChat() {
     if (stream) {
       const assistantBubble = showUserMsg('assistant', '');
       await streamChat(body, assistantBubble);
+      attachAssistantRetryAction(assistantBubble);
     } else {
       const res = await fetch('/v1/chat/completions', { method: 'POST', headers, body: JSON.stringify(body) });
-      if (res.status === 401) return showToast('API Key 无效或未授权', 'error');
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) throw new Error('API Key 无效或未授权');
+      if (!res.ok) throw new Error(data?.error?.message || data?.detail || `HTTP ${res.status}`);
       const content = data?.choices?.[0]?.message?.content || '';
       chatMessages.push({ role: 'assistant', content });
-      showUserMsg('assistant', content);
+      const assistantBubble = showUserMsg('assistant', content);
+      attachAssistantRetryAction(assistantBubble);
     }
   } catch (e) {
     showToast('发送失败: ' + (e?.message || e), 'error');
+  } finally {
+    setChatSendingState(false);
   }
 }
 
-async function streamChat(body, bubbleEl) {
+async function streamChat(body, bubbleEl, commitHistory = true) {
   const headers = { ...buildApiHeaders(), 'Content-Type': 'application/json' };
   const res = await fetch('/v1/chat/completions', { method: 'POST', headers, body: JSON.stringify(body) });
   if (!res.ok || !res.body) {
@@ -866,8 +1034,8 @@ async function streamChat(body, bubbleEl) {
       if (!line.startsWith('data:')) continue;
       const payload = line.slice(5).trim();
       if (payload === '[DONE]') {
-        chatMessages.push({ role: 'assistant', content: acc });
-        return;
+        if (commitHistory) chatMessages.push({ role: 'assistant', content: acc });
+        return acc;
       }
       try {
         const obj = JSON.parse(payload);
@@ -881,7 +1049,8 @@ async function streamChat(body, bubbleEl) {
     }
   }
 
-  chatMessages.push({ role: 'assistant', content: acc });
+  if (commitHistory) chatMessages.push({ role: 'assistant', content: acc });
+  return acc;
 }
 
 function createImageCard(index) {
@@ -933,6 +1102,7 @@ function updateImageCardCompleted(card, src, failed) {
   const img = document.createElement('img');
   img.alt = 'image';
   img.src = src;
+  bindRetryableImage(img);
   card.insertBefore(img, card.firstChild);
 
   if (status) status.textContent = '完成';

@@ -58,11 +58,25 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 python scripts/smoke_test.py --base-url http://127.0.0.1:8000
 ```
 
+### 仓库级部署自检
+
+在执行一键部署前，建议先在仓库根目录运行：
+
+```bash
+uv run pytest -q
+npm run typecheck
+python scripts/check_model_catalog_sync.py
+npx wrangler deploy --dry-run --config wrangler.toml
+docker compose -f docker-compose.yml config
+docker compose -f docker-compose.yml -f docker-compose.build.yml config
+```
+
 > 如果拉取镜像时报 `denied`：说明 GHCR 镜像不可匿名拉取（未公开或需要登录）。你可以先执行 `docker login ghcr.io`，或在 `.env` 里设置 `GROK2API_IMAGE` 指向你自己的公开镜像；也可以用上面的 `--build` 从源码构建运行。
 
 > 可选：复制 `.env.example` 为 `.env`，可配置端口/日志/存储等；并可通过 `COMPOSE_PROFILES` 一键启用 `redis/pgsql/mysql`（见 `.env.example` 内示例）。
 
 > 部署一致性说明：本地（FastAPI）/ Docker / Cloudflare Workers 共用同一套管理功能语义（Token 筛选、API Key 管理、后台管理接口语义一致）。
+> 上游关键同步（2026-02-20）：已同步聊天页“重试上一条回答”与“图片加载失败点击重试”，三部署下行为一致。
 > Cloudflare 可通过 `.github/workflows/cloudflare-workers.yml` 一键部署（需先配置上述两个 Secrets），Docker 仍保持 `docker compose up -d` 一键启动。
 
 ### 管理面板
@@ -168,15 +182,19 @@ python scripts/smoke_test.py --base-url http://127.0.0.1:8000
 | 模型名                     | 计次 | 可用账号    | 对话功能 | 图像功能 | 视频功能 |
 | :------------------------- | :--: | :---------- | :------: | :------: | :------: |
 | `grok-3`                 |  1  | Basic/Super |   支持   |   支持   |    -    |
-| `grok-3-fast`            |  1  | Basic/Super |   支持   |   支持   |    -    |
+| `grok-3-mini`            |  1  | Basic/Super |   支持   |   支持   |    -    |
+| `grok-3-thinking`        |  1  | Basic/Super |   支持   |   支持   |    -    |
 | `grok-4`                 |  1  | Basic/Super |   支持   |   支持   |    -    |
 | `grok-4-mini`            |  1  | Basic/Super |   支持   |   支持   |    -    |
-| `grok-4-fast`            |  1  | Basic/Super |   支持   |   支持   |    -    |
+| `grok-4-thinking`        |  1  | Basic/Super |   支持   |   支持   |    -    |
 | `grok-4-heavy`           |  4  | Super       |   支持   |   支持   |    -    |
-| `grok-4.1`               |  1  | Basic/Super |   支持   |   支持   |    -    |
+| `grok-4.1-mini`          |  1  | Basic/Super |   支持   |   支持   |    -    |
+| `grok-4.1-fast`          |  1  | Basic/Super |   支持   |   支持   |    -    |
+| `grok-4.1-expert`        |  4  | Basic/Super |   支持   |   支持   |    -    |
 | `grok-4.1-thinking`      |  4  | Basic/Super |   支持   |   支持   |    -    |
-| `grok-imagine-1.0`       |  4  | Basic/Super |    -    |   支持   |    -    |
-| `grok-imagine-1.0-edit`  |  4  | Basic/Super |    -    |   支持   |    -    |
+| `grok-4.20-beta`         |  1  | Basic/Super |   支持   |   支持   |    -    |
+| `grok-imagine-1.0`       |  -  | Basic/Super |    -    |   支持   |    -    |
+| `grok-imagine-1.0-edit`  |  -  | Basic/Super |    -    |   支持   |    -    |
 | `grok-imagine-1.0-video` |  -  | Basic/Super |    -    |    -    |   支持   |
 
 <br>
@@ -246,13 +264,13 @@ curl http://localhost:8000/v1/images/generations \
 | `prompt` | string | 图像描述提示词 | - |
 | `n` | integer | 生成数量 | `1` - `10`（流式仅 `1` 或 `2`） |
 | `stream` | boolean | 是否开启流式输出 | `true`, `false` |
-| `size` | string | 图片尺寸/比例 | `1024x1024`、`16:9`、`9:16`、`1:1`、`2:3`、`3:2` |
+| `size` | string | 图片尺寸/比例 | `1024x1024`、`1280x720`、`720x1280`、`1792x1024`、`1024x1792`、`16:9`、`9:16`、`1:1`、`2:3`、`3:2` |
 | `concurrency` | integer | 新方式并发数 | `1` - `3`（仅新生图方式生效） |
 | `response_format` | string | 图片返回格式 | `url`, `base64`, `b64_json`（默认跟随 `app.image_format`） |
 
 注：
 - `grok.image_generation_method=imagine_ws_experimental` 支持 `single`（单次）与 `continuous`（持续）两种模式。
-- `size` 在新方式下会映射为比例：`1024x576/1280x720/1536x864 -> 16:9`，`576x1024/720x1280/864x1536 -> 9:16`，`1024x1024/512x512 -> 1:1`，`1024x1536/512x768/768x1024 -> 2:3`，`1536x1024/768x512/1024x768 -> 3:2`；其他值默认 `2:3`。
+- `size` 在新方式下会映射为比例：`1024x576/1280x720/1536x864 -> 16:9`，`576x1024/720x1280/864x1536 -> 9:16`，`1024x1024/512x512 -> 1:1`，`1024x1536/1024x1792/512x768/768x1024 -> 2:3`，`1536x1024/1792x1024/768x512/1024x768 -> 3:2`；其他值默认 `2:3`。
 - 除上述外的其他参数将自动丢弃并忽略。
 
 <br>

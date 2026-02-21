@@ -11,6 +11,8 @@
 - **KV**：缓存 `/images/*` 的图片/视频资源（从 `assets.grok.com` 代理抓取）
 - **每天 0 点统一清除**：通过 KV `expiration` + Workers Cron 定时清理元数据（`wrangler.toml` 已配置，默认按北京时间 00:00）
 - **前端移动端适配一致生效**：Workers 与 FastAPI/Docker 复用同一套 `/static/*` 资源，包含手机端抽屉导航、表格横向滚动、API Key 居中悬浮新增弹窗等交互
+- **模型集合与主 README 对齐**：严格移除旧模型名并同步新增模型（含 `grok-4.20-beta`）
+- **聊天重试能力一致生效**：`/chat` 与 `/admin/chat` 支持“重试上一条回答”与“图片加载失败点击重试”
 
 > 原 Python/FastAPI 版本仍保留用于本地/Docker；Cloudflare 部署请按本文件走 Worker 版本。
 
@@ -143,6 +145,19 @@ python scripts/smoke_test.py --base-url https://<你的域名或workers.dev>
 3. `wrangler d1 migrations apply DB --remote --config wrangler.ci.toml`
 4. `wrangler deploy`
 
+### 仓库级部署自检（建议）
+
+在触发一键部署前，可先在仓库根目录运行：
+
+```bash
+uv run pytest -q
+npm run typecheck
+python scripts/check_model_catalog_sync.py
+npx wrangler deploy --dry-run --config wrangler.toml
+docker compose -f docker-compose.yml config
+docker compose -f docker-compose.yml -f docker-compose.build.yml config
+```
+
 触发策略保持不变：
 - `push` 到 `main`：自动触发 Cloudflare 部署作业
 - `workflow_dispatch`：可手动选择 `cloudflare/docker/both`
@@ -194,7 +209,7 @@ python scripts/smoke_test.py --base-url https://<你的域名或workers.dev>
 ## 8) 接口
 
 - POST /v1/chat/completions (supports stream: true)
-- GET /v1/models
+- GET /v1/models (model set aligns with `readme.md`, including latest additions/removals)
 - GET /v1/images/method: returns current image-generation mode (legacy or imagine_ws_experimental) for /chat and /admin/chat UI switching
 - POST /v1/images/generations: experimental mode supports size (aspect-ratio mapping) and concurrency (1..3)
 - POST /v1/images/edits: only accepts grok-imagine-1.0-edit

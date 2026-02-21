@@ -56,11 +56,25 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 python scripts/smoke_test.py --base-url http://127.0.0.1:8000
 ```
 
+### Repo-level deployment self-check
+
+Run these checks before one-click deployment updates:
+
+```bash
+uv run pytest -q
+npm run typecheck
+python scripts/check_model_catalog_sync.py
+npx wrangler deploy --dry-run --config wrangler.toml
+docker compose -f docker-compose.yml config
+docker compose -f docker-compose.yml -f docker-compose.build.yml config
+```
+
 > If `docker compose up -d` fails with `denied` while pulling: the GHCR image is not publicly pullable (private or requires auth). Run `docker login ghcr.io`, or set `GROK2API_IMAGE` in `.env` to your own public image; alternatively use `--build` to build from source.
 
 > Optional: copy `.env.example` to `.env` to configure port/logging/storage. You can also set `COMPOSE_PROFILES` to enable `redis/pgsql/mysql` with one compose file (see examples in `.env.example`).
 
 > Deployment consistency: Local (FastAPI), Docker, and Cloudflare Workers share the same admin behavior semantics (token filters, API key management, and admin API responses).
+> Upstream key-sync (2026-02-20): chat now includes "Retry last response" and "Click to retry broken image" in all three deployment modes.
 > Cloudflare keeps one-click deployment via `.github/workflows/cloudflare-workers.yml` (with the two required secrets configured), and Docker keeps one-command startup via `docker compose up -d`.
 
 ### Admin panel
@@ -145,14 +159,19 @@ Required config keys (Admin -> Config, `register.*`):
 | Model | Cost | Account | Chat | Image | Video |
 | :--- | :---: | :--- | :---: | :---: | :---: |
 | `grok-3` | 1 | Basic/Super | Yes | Yes | - |
-| `grok-3-fast` | 1 | Basic/Super | Yes | Yes | - |
+| `grok-3-mini` | 1 | Basic/Super | Yes | Yes | - |
+| `grok-3-thinking` | 1 | Basic/Super | Yes | Yes | - |
 | `grok-4` | 1 | Basic/Super | Yes | Yes | - |
 | `grok-4-mini` | 1 | Basic/Super | Yes | Yes | - |
-| `grok-4-fast` | 1 | Basic/Super | Yes | Yes | - |
+| `grok-4-thinking` | 1 | Basic/Super | Yes | Yes | - |
 | `grok-4-heavy` | 4 | Super | Yes | Yes | - |
-| `grok-4.1` | 1 | Basic/Super | Yes | Yes | - |
+| `grok-4.1-mini` | 1 | Basic/Super | Yes | Yes | - |
+| `grok-4.1-fast` | 1 | Basic/Super | Yes | Yes | - |
+| `grok-4.1-expert` | 4 | Basic/Super | Yes | Yes | - |
 | `grok-4.1-thinking` | 4 | Basic/Super | Yes | Yes | - |
-| `grok-imagine-1.0` | 4 | Basic/Super | - | Yes | - |
+| `grok-4.20-beta` | 1 | Basic/Super | Yes | Yes | - |
+| `grok-imagine-1.0` | - | Basic/Super | - | Yes | - |
+| `grok-imagine-1.0-edit` | - | Basic/Super | - | Yes | - |
 | `grok-imagine-1.0-video` | - | Basic/Super | - | - | Yes |
 
 <br>
@@ -219,14 +238,14 @@ curl http://localhost:8000/v1/images/generations \
 | `model` | string | Image model ID | `grok-imagine-1.0` |
 | `prompt` | string | Prompt | - |
 | `n` | integer | Number of images | `1` - `10` (streaming: `1` or `2` only) |
-| `size` | string | Image size / aspect ratio (experimental method) | `1024x1024`, `16:9`, `9:16`, `1:1`, `2:3`, `3:2` |
+| `size` | string | Image size / aspect ratio (experimental method) | `1024x1024`, `1280x720`, `720x1280`, `1792x1024`, `1024x1792`, `16:9`, `9:16`, `1:1`, `2:3`, `3:2` |
 | `concurrency` | integer | Parallel upstream calls (experimental method) | `1` - `3` (default `1`) |
 | `stream` | boolean | Enable streaming | `true`, `false` |
 | `response_format` | string | Output format | `url`, `base64`, `b64_json` (defaults to `app.image_format`) |
 
 Notes:
 - when `grok.image_generation_method=imagine_ws_experimental`, `stream=true` uses SSE realtime image events (`image_generation.partial_image` then `image_generation.completed`) and keeps SSE semantics even on fallback.
-- `size` is normalized to aspect ratios: `16:9`, `9:16`, `1:1`, `2:3`, `3:2`; unsupported values default to `2:3`.
+- `size` is normalized to aspect ratios: `1024x576/1280x720/1536x864 -> 16:9`, `576x1024/720x1280/864x1536 -> 9:16`, `1024x1024/512x512 -> 1:1`, `1024x1536/1024x1792/512x768/768x1024 -> 2:3`, `1536x1024/1792x1024/768x512/1024x768 -> 3:2`; unsupported values default to `2:3`.
 - any other parameters will be discarded and ignored.
 
 <br>

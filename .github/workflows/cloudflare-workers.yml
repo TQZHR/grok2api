@@ -22,8 +22,23 @@ permissions:
   contents: read
 
 jobs:
+  validate-model-catalog:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify model catalog consistency
+        run: python scripts/check_model_catalog_sync.py
+
   deploy-cloudflare:
     if: ${{ (github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_target == 'cloudflare' || github.event.inputs.deploy_target == 'both')) || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+    needs: validate-model-catalog
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -222,6 +237,7 @@ jobs:
 
   build-docker:
     if: ${{ (github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_target == 'docker' || github.event.inputs.deploy_target == 'both')) || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) }}
+    needs: validate-model-catalog
     runs-on: ubuntu-latest
     permissions:
       contents: read

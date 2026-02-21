@@ -95,6 +95,34 @@
   margin-top: 8px;
 }
 
+.msg-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.chat-retry-btn {
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  background: #fff;
+  color: var(--accents-7);
+  font-size: 12px;
+  line-height: 1;
+  padding: 6px 10px;
+  transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+
+.chat-retry-btn:hover {
+  border-color: #000;
+  color: #000;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.chat-retry-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .composer {
   margin-top: 12px;
   border-top: 1px solid var(--border);
@@ -178,6 +206,44 @@
   width: 100%;
   height: auto;
   display: block;
+}
+
+.img-retry {
+  width: 100%;
+  min-height: 120px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.02);
+  color: var(--accents-5);
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+
+.img-retry:hover {
+  border-color: #000;
+  color: #000;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.img-retry.loading {
+  opacity: 0.72;
+  cursor: wait;
+}
+
+.msg-bubble .img-retry {
+  margin-top: 8px;
+}
+
+.result-card .img-retry,
+.waterfall-item .img-retry {
+  min-height: 180px;
+  border-radius: 0;
 }
 
 .result-placeholder {

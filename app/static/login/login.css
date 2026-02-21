@@ -98,6 +98,14 @@
   justify-content: center;
 }
 
+.login-note {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--accents-4);
+  text-align: center;
+  margin-top: 2px;
+}
+
 @media (max-width: 768px) {
   .login-shell {
     width: min(420px, 94vw);
@@ -117,5 +125,9 @@
   .login-button {
     height: 36px;
     font-size: 13px;
+  }
+
+  .login-note {
+    font-size: 12px;
   }
 }
