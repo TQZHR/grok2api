@@ -1,7 +1,11 @@
--- Add token usage columns to request_logs
-
-ALTER TABLE request_logs ADD COLUMN total_tokens INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE request_logs ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE request_logs ADD COLUMN output_tokens INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE request_logs ADD COLUMN reasoning_tokens INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE request_logs ADD COLUMN cached_tokens INTEGER NOT NULL DEFAULT 0;
+-- request_logs token usage columns are part of the base schema now (0001_init.sql).
+--
+-- Historical note:
+-- 0006 previously added:
+--   total_tokens, input_tokens, output_tokens, reasoning_tokens, cached_tokens
+--
+-- But on fresh databases initialized from the current 0001 schema, those columns
+-- already exist. Re-applying ALTER TABLE here causes duplicate-column failures on
+-- remote migration runs.
+--
+-- Keep this migration as a no-op to preserve migration ordering compatibility.
