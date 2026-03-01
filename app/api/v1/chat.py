@@ -18,14 +18,15 @@ from app.services.quota import enforce_daily_quota
 router = APIRouter(tags=["Chat"])
 
 
-VALID_ROLES = ["developer", "system", "user", "assistant"]
+VALID_ROLES = ["developer", "system", "user", "assistant", "tool"]
 USER_CONTENT_TYPES = ["text", "image_url", "input_audio", "file"]
 
 
 class MessageItem(BaseModel):
     """消息项"""
     role: str
-    content: Union[str, List[Dict[str, Any]]]
+    # OpenAI 兼容：assistant 在携带 tool_calls 时，content 可能为 null
+    content: Union[str, List[Dict[str, Any]], None] = None
     
     @field_validator("role")
     @classmethod
@@ -122,6 +123,16 @@ def validate_request(request: ChatCompletionRequest):
     # 验证消息
     for idx, msg in enumerate(request.messages):
         content = msg.content
+
+        # 允许 assistant/tool 的空内容（常见于 tool_calls / tool 结果消息）
+        if content is None:
+            if msg.role in ("assistant", "tool"):
+                continue
+            raise ValidationException(
+                message="Message content cannot be empty",
+                param=f"messages.{idx}.content",
+                code="empty_content"
+            )
         
         # 字符串内容
         if isinstance(content, str):
