@@ -168,6 +168,7 @@ export function createOpenAiStreamFromGrokNdjson(
       let thinkingFinished = false;
       let videoProgressStarted = false;
       let lastVideoProgress = -1;
+      const collectedSources = new Map<string, { title: string; url: string }>();
 
       let buffer = "";
 
@@ -253,6 +254,17 @@ export function createOpenAiStreamFromGrokNdjson(
             const userRespModel = grok.userResponse?.model;
             if (typeof userRespModel === "string" && userRespModel.trim()) currentModel = userRespModel.trim();
 
+            // Collect web search sources early (before rawToken checks that may skip this frame)
+            if (grok.webSearchResults?.results && Array.isArray(grok.webSearchResults.results)) {
+              for (const r of grok.webSearchResults.results) {
+                const url = typeof r.url === "string" ? r.url.trim() : "";
+                if (url && !collectedSources.has(url)) {
+                  const title = typeof r.title === "string" ? r.title.trim() : url;
+                  collectedSources.set(url, { title, url });
+                }
+              }
+            }
+
             // Video generation stream
             const videoResp = grok.streamingVideoGenerationResponse;
             if (videoResp) {
@@ -337,7 +349,15 @@ export function createOpenAiStreamFromGrokNdjson(
             if (typeof rawToken !== "string" || !rawToken) continue;
             let token = rawToken;
 
-            if (filteredTags.some((t) => token.includes(t))) continue;
+            // Strip filtered tags from token instead of dropping entire token
+            for (const t of filteredTags) {
+              if (token.includes(t)) {
+                token = token.replace(new RegExp(`<[^>]*${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^>]*>(?:<[^>]*>[^<]*<\/[^>]*>)*\\s*<\/[^>]*>`, "g"), "");
+                token = token.replace(new RegExp(`<[^>]*${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^>]*\\/?>`, "g"), "");
+              }
+            }
+            token = token.trim();
+            if (!token) continue;
 
             const currentIsThinking = Boolean(grok.isThinking);
             const messageTag = grok.messageTag;
@@ -382,6 +402,17 @@ export function createOpenAiStreamFromGrokNdjson(
           }
         }
 
+        // Append collected web search sources as References section
+        if (collectedSources.size > 0) {
+          const refLines = ["\n\n## References\n"];
+          let idx = 1;
+          for (const s of collectedSources.values()) {
+            refLines.push(`${idx}. [${s.title}](${s.url})`);
+            idx++;
+          }
+          controller.enqueue(encoder.encode(makeChunk(id, created, currentModel, refLines.join("\n"))));
+        }
+
         controller.enqueue(encoder.encode(makeChunk(id, created, currentModel, "", "stop")));
         controller.enqueue(encoder.encode(makeDone()));
         if (opts.onFinish) await opts.onFinish({ status: finalStatus, duration: (Date.now() - startTime) / 1000 });
@@ -417,6 +448,8 @@ export async function parseOpenAiFromGrokNdjson(
 
   let content = "";
   let model = requestedModel;
+  const collectedSources = new Map<string, { title: string; url: string }>();
+
   for (const line of lines) {
     let data: GrokNdjson;
     try {
@@ -430,6 +463,17 @@ export async function parseOpenAiFromGrokNdjson(
 
     const grok = (data as any).result?.response;
     if (!grok) continue;
+
+    // Collect web search sources from all frames
+    if (grok.webSearchResults?.results && Array.isArray(grok.webSearchResults.results)) {
+      for (const r of grok.webSearchResults.results) {
+        const url = typeof r.url === "string" ? r.url.trim() : "";
+        if (url && !collectedSources.has(url)) {
+          const title = typeof r.title === "string" ? r.title.trim() : url;
+          collectedSources.set(url, { title, url });
+        }
+      }
+    }
 
     const videoResp = grok.streamingVideoGenerationResponse;
     if (videoResp?.videoUrl && typeof videoResp.videoUrl === "string") {
@@ -474,6 +518,17 @@ export async function parseOpenAiFromGrokNdjson(
 
     // For normal chat replies, the first modelResponse is enough.
     break;
+  }
+
+  // Append collected web search sources as References section
+  if (collectedSources.size > 0) {
+    const refLines = ["\n\n## References\n"];
+    let idx = 1;
+    for (const s of collectedSources.values()) {
+      refLines.push(`${idx}. [${s.title}](${s.url})`);
+      idx++;
+    }
+    content += refLines.join("\n");
   }
 
   return {

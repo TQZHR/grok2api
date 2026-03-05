@@ -1,6 +1,7 @@
 """
 OpenAI 响应格式处理器
 """
+import re
 import time
 import uuid
 import random
@@ -37,9 +38,64 @@ def _build_video_poster_preview(video_url: str, thumbnail_url: str = "") -> str:
 </a>'''
 
 
+_GROK_RENDER_TAG_RE = re.compile(
+    r"<grok:render\b[^>]*>(?:<argument\b[^>]*>[^<]*</argument>)*\s*</grok:render>"
+)
+
+
+def _extract_web_sources(mr: dict) -> list[dict]:
+    """Extract web search sources from modelResponse fields."""
+    sources: list[dict] = []
+    seen: set[str] = set()
+
+    for item in mr.get("citedWebSearchResults", mr.get("webSearchResults", [])):
+        if isinstance(item, dict):
+            url = (item.get("url") or "").strip()
+            if url and url not in seen:
+                seen.add(url)
+                sources.append({
+                    "title": (item.get("title") or "").strip(),
+                    "url": url,
+                })
+
+    if not sources:
+        for raw in mr.get("cardAttachmentsJson", []):
+            try:
+                card = orjson.loads(raw) if isinstance(raw, (str, bytes)) else raw
+            except Exception:
+                continue
+            if not isinstance(card, dict):
+                continue
+            url = (card.get("url") or "").strip()
+            if url and url not in seen:
+                seen.add(url)
+                sources.append({
+                    "title": (card.get("title") or "").strip(),
+                    "url": url,
+                })
+
+    return sources
+
+
+def _strip_grok_render_tags(text: str) -> str:
+    """Remove <grok:render> citation placeholder tags from text."""
+    return _GROK_RENDER_TAG_RE.sub("", text)
+
+
+def _format_sources_as_references(sources: list[dict]) -> str:
+    """Format sources as a Markdown references section."""
+    if not sources:
+        return ""
+    lines = ["\n\n## References\n"]
+    for i, s in enumerate(sources, 1):
+        title = s.get("title") or s["url"]
+        lines.append(f"{i}. [{title}]({s['url']})")
+    return "\n".join(lines)
+
+
 class BaseProcessor:
     """基础处理器"""
-    
+
     def __init__(self, model: str, token: str = ""):
         self.model = model
         self.token = token
@@ -109,7 +165,7 @@ class BaseProcessor:
 
 class StreamProcessor(BaseProcessor):
     """流式响应处理器"""
-    
+
     def __init__(self, model: str, token: str = "", think: bool = None):
         super().__init__(model, token)
         self.response_id: Optional[str] = None
@@ -118,7 +174,8 @@ class StreamProcessor(BaseProcessor):
         self.role_sent: bool = False
         self.filter_tags = get_config("grok.filter_tags", [])
         self.image_format = get_config("app.image_format", "url")
-        
+        self.web_sources: list[dict] = []
+
         if think is None:
             self.show_think = get_config("grok.thinking", False)
         else:
@@ -166,7 +223,11 @@ class StreamProcessor(BaseProcessor):
                             yield self._sse(msg + "\n")
                         yield self._sse("</think>\n")
                         self.think_opened = False
-                    
+
+                    # 提取 web search sources
+                    if sources := _extract_web_sources(mr):
+                        self.web_sources = sources
+
                     # 处理生成的图片
                     for url in mr.get("generatedImageUrls", []):
                         parts = url.split("/")
@@ -190,11 +251,19 @@ class StreamProcessor(BaseProcessor):
                 
                 # 普通 token
                 if (token := resp.get("token")) is not None:
-                    if token and not (self.filter_tags and any(t in token for t in self.filter_tags)):
+                    if token:
+                        # 剥离 grok:render 标签而非丢弃整个 token
+                        if self.filter_tags and any(t in token for t in self.filter_tags):
+                            token = _strip_grok_render_tags(token)
+                            if not token.strip():
+                                continue
                         yield self._sse(token)
-                        
+
             if self.think_opened:
                 yield self._sse("</think>\n")
+            # 输出 web search references
+            if self.web_sources:
+                yield self._sse(_format_sources_as_references(self.web_sources))
             yield self._sse(finish="stop")
             yield "data: [DONE]\n\n"
         except Exception as e:
@@ -216,7 +285,8 @@ class CollectProcessor(BaseProcessor):
         response_id = ""
         fingerprint = ""
         content = ""
-        
+        web_sources: list[dict] = []
+
         try:
             async for line in response:
                 if not line:
@@ -234,7 +304,10 @@ class CollectProcessor(BaseProcessor):
                 if mr := resp.get("modelResponse"):
                     response_id = mr.get("responseId", "")
                     content = mr.get("message", "")
-                    
+
+                    # 提取 web search sources
+                    web_sources = _extract_web_sources(mr)
+
                     if urls := mr.get("generatedImageUrls"):
                         content += "\n"
                         for url in urls:
@@ -255,11 +328,16 @@ class CollectProcessor(BaseProcessor):
                     
                     if (meta := mr.get("metadata", {})).get("llm_info", {}).get("modelHash"):
                         fingerprint = meta["llm_info"]["modelHash"]
-                            
+
         except Exception as e:
             logger.error(f"Collect processing error: {e}", extra={"model": self.model})
         finally:
             await self.close()
+
+        # 清理 grok:render 标签并附加 web search references
+        content = _strip_grok_render_tags(content)
+        if web_sources:
+            content += _format_sources_as_references(web_sources)
         
         return {
             "id": response_id,
