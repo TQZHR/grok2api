@@ -383,14 +383,20 @@ function applyKeyLimitPreset(mode) {
   q('limit-video').value = recommended.video;
 }
 
-async function loadKeys() {
+async function loadKeys(retryOn401 = true) {
   const body = q('keys-table-body');
   if (body) body.innerHTML = '';
   setLoading(true);
   setEmptyState(false);
   try {
     const res = await fetch('/api/v1/admin/keys', { headers: buildAuthHeaders(apiKey) });
-    if (res.status === 401) return logout();
+    if (res.status === 401) {
+      if (retryOn401) {
+        apiKey = await ensureApiKey(true);
+        if (apiKey) return loadKeys(false);
+      }
+      return logout();
+    }
     const payload = await parseJsonSafely(res);
     if (!res.ok || payload?.success !== true) {
       throw new Error(extractErrorMessage(payload, '加载失败'));
@@ -428,7 +434,12 @@ async function submitKeyModal() {
           is_active: isActive,
         }),
       });
-      if (res.status === 401) return logout();
+      if (res.status === 401) {
+        apiKey = await ensureApiKey(true);
+        if (!apiKey) return logout();
+        setSubmitState(false);
+        return submitKeyModal();
+      }
       const payload = await parseJsonSafely(res);
       if (!res.ok || payload?.success !== true) {
         throw new Error(extractErrorMessage(payload, '创建失败'));
@@ -457,7 +468,12 @@ async function submitKeyModal() {
         limits,
       }),
     });
-    if (res.status === 401) return logout();
+    if (res.status === 401) {
+      apiKey = await ensureApiKey(true);
+      if (!apiKey) return logout();
+      setSubmitState(false);
+      return submitKeyModal();
+    }
     const payload = await parseJsonSafely(res);
     if (!res.ok || payload?.success !== true) {
       throw new Error(extractErrorMessage(payload, '更新失败'));
@@ -484,7 +500,11 @@ async function deleteKey(row) {
       headers: { ...buildAuthHeaders(apiKey), 'Content-Type': 'application/json' },
       body: JSON.stringify({ key }),
     });
-    if (res.status === 401) return logout();
+    if (res.status === 401) {
+      apiKey = await ensureApiKey(true);
+      if (!apiKey) return logout();
+      return deleteKey(row);
+    }
     const payload = await parseJsonSafely(res);
     if (!res.ok || payload?.success !== true) {
       throw new Error(extractErrorMessage(payload, '删除失败'));

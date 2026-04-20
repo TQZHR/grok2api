@@ -171,7 +171,10 @@ async function requestApiKey(creds) {
   return cachedApiKey;
 }
 
-async function ensureApiKey() {
+async function ensureApiKey(forceRefresh = false) {
+  if (cachedApiKey && !forceRefresh) {
+    return cachedApiKey;
+  }
   const creds = await getStoredAppKey();
   if (!creds || !creds.password) {
     window.location.href = '/login';
