@@ -182,7 +182,14 @@ export async function sendConversationRequest(args: {
   settings: GrokSettings;
   referer?: string;
 }): Promise<Response> {
-  const { payload, cookie, settings, referer } = args;
+  const { cookie, settings, referer } = args;
+  const payload: Record<string, unknown> = { ...args.payload };
+  const customPersonality = String(settings.custom_personality ?? "");
+  if (customPersonality.trim()) {
+    payload.customPersonality = customPersonality;
+  } else {
+    delete payload.customPersonality;
+  }
   const headers = getDynamicHeaders(settings, "/rest/app-chat/conversations/new");
   headers.Cookie = cookie;
   if (referer) headers.Referer = referer;

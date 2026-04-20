@@ -9,6 +9,7 @@ timeout = 120
 base_proxy_url = ""
 asset_proxy_url = ""
 cf_clearance = ""
+custom_personality = ""
 max_retry = 3
 retry_status_codes = [401,429,403]
 image_generation_method = "legacy"

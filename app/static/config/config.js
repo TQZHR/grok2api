@@ -32,6 +32,7 @@ const LOCALE_MAP = {
     "temporary": { title: "临时对话", desc: "是否启用临时对话模式。" },
     "stream": { title: "流式响应", desc: "是否默认启用流式输出。" },
     "thinking": { title: "思维链", desc: "是否启用模型思维链输出。" },
+    "custom_personality": { title: "自定义指令", desc: "附加到所有 Grok 聊天请求的自定义指令内容（支持多行）。" },
     "dynamic_statsig": { title: "动态指纹", desc: "是否启用动态生成 Statsig 值。" },
     "filter_tags": { title: "过滤标签", desc: "自动过滤 Grok 响应中的特殊标签。" },
     "video_poster_preview": { title: "视频海报预览", desc: "启用后会将返回内容中的 <video> 标签替换为带播放按钮的 Poster 预览图；点击预览图会在新标签页打开视频（默认关闭）。" },
@@ -253,6 +254,15 @@ function renderConfig(data) {
         input.dataset.section = section;
         input.dataset.key = key;
         input.dataset.type = 'json';
+        inputWrapper.appendChild(input);
+      }
+      else if (key === 'custom_personality') {
+        input = document.createElement('textarea');
+        input.className = 'geist-input';
+        input.rows = 5;
+        input.value = typeof val === 'string' ? val : '';
+        input.dataset.section = section;
+        input.dataset.key = key;
         inputWrapper.appendChild(input);
       }
       else {

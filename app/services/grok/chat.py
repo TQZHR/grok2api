@@ -32,6 +32,15 @@ TIMEOUT = 120
 BROWSER = "chrome136"
 
 
+def _read_custom_personality() -> str:
+    """Read configured custom personality text and keep original formatting."""
+    value = get_config("grok.custom_personality", "")
+    if value is None:
+        return ""
+    text = str(value)
+    return text if text.strip() else ""
+
+
 @dataclass
 class ChatRequest:
     """聊天请求数据"""
@@ -256,6 +265,15 @@ class ChatRequestBuilder:
             }
         }
 
+    @staticmethod
+    def apply_custom_personality(payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Inject optional customPersonality into upstream payload."""
+        custom_personality = _read_custom_personality()
+        if custom_personality:
+            payload["customPersonality"] = custom_personality
+        else:
+            payload.pop("customPersonality", None)
+        return payload
 
 # ==================== Grok 服务 ====================
 
@@ -300,6 +318,7 @@ class GrokChatService:
             message, model, mode, think, 
             file_attachments, image_attachments
         )
+        payload = ChatRequestBuilder.apply_custom_personality(payload)
         proxies = {"http": self.proxy, "https": self.proxy} if self.proxy else None
         timeout = get_config("grok.timeout", TIMEOUT)
         

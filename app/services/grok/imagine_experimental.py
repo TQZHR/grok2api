@@ -365,6 +365,7 @@ class ImagineExperimentalService:
 
         last_error: Optional[Exception] = None
         for payload in payloads:
+            payload = ChatRequestBuilder.apply_custom_personality(payload)
             session = AsyncSession(impersonate=BROWSER)
             response = None
             try:

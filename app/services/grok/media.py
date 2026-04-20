@@ -17,6 +17,7 @@ from app.services.grok.model import ModelService
 from app.services.token import get_token_manager
 from app.services.grok.processor import VideoStreamProcessor, VideoCollectProcessor
 from app.services.request_stats import request_stats
+from app.services.grok.chat import ChatRequestBuilder
 
 # API 端点
 CREATE_POST_API = "https://grok.com/rest/media/post/create"
@@ -243,6 +244,7 @@ class VideoService:
                 # Step 2: 建立连接
                 headers = self._build_headers(token)
                 payload = self._build_payload(prompt, post_id, aspect_ratio, video_length, resolution, preset)
+                payload = ChatRequestBuilder.apply_custom_personality(payload)
                 
                 session = AsyncSession(impersonate=BROWSER)
                 response = await session.post(
@@ -323,6 +325,7 @@ class VideoService:
                 # Step 2: 建立连接
                 headers = self._build_headers(token)
                 payload = self._build_payload(prompt, post_id, aspect_ratio, video_length, resolution, preset)
+                payload = ChatRequestBuilder.apply_custom_personality(payload)
                 
                 session = AsyncSession(impersonate=BROWSER)
                 response = await session.post(

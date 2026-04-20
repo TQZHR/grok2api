@@ -261,6 +261,7 @@ adminRoutes.get("/api/v1/admin/config", requireAdminAuth, async (c) => {
         temporary: Boolean(settings.grok.temporary),
         stream: true,
         thinking: Boolean(settings.grok.show_thinking),
+        custom_personality: String(settings.grok.custom_personality ?? ""),
         dynamic_statsig: Boolean(settings.grok.dynamic_statsig),
         filter_tags: filterTags,
         video_poster_preview: Boolean(settings.grok.video_poster_preview),
@@ -327,6 +328,8 @@ adminRoutes.post("/api/v1/admin/config", requireAdminAuth, async (c) => {
       if (typeof grokCfg.base_proxy_url === "string") grok_config.proxy_url = grokCfg.base_proxy_url.trim();
       if (typeof grokCfg.asset_proxy_url === "string") grok_config.cache_proxy_url = grokCfg.asset_proxy_url.trim();
       if (typeof grokCfg.cf_clearance === "string") grok_config.cf_clearance = grokCfg.cf_clearance.trim();
+      if (typeof grokCfg.custom_personality === "string")
+        grok_config.custom_personality = grokCfg.custom_personality;
       if (typeof grokCfg.filter_tags === "string") {
         grok_config.filtered_tags = grokCfg.filter_tags;
       } else if (Array.isArray(grokCfg.filter_tags)) {

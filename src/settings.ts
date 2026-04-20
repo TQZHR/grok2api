@@ -19,6 +19,7 @@ export interface GrokSettings {
   proxy_pool_interval?: number;
   cache_proxy_url?: string;
   cf_clearance?: string; // stored as VALUE only (no "cf_clearance=" prefix)
+  custom_personality?: string;
   x_statsig_id?: string;
   dynamic_statsig?: boolean;
   filtered_tags?: string;
@@ -79,6 +80,7 @@ const DEFAULTS: SettingsBundle = {
     proxy_pool_interval: 300,
     cache_proxy_url: "",
     cf_clearance: "",
+    custom_personality: "",
     x_statsig_id: "",
     dynamic_statsig: true,
     filtered_tags: "xaiartifact,xai:tool_usage_card",

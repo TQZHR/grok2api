@@ -41,6 +41,20 @@ def json_dumps(obj: Any) -> str:
 def json_loads(obj: str | bytes) -> Any:
     return orjson.loads(obj)
 
+
+def _toml_escape_string(value: str) -> str:
+    """Escape a string so it is safe in a single-line TOML basic string."""
+    return (
+        value
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\b", "\\b")
+        .replace("\f", "\\f")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
+
 class StorageError(Exception):
     """存储服务基础异常"""
     pass
@@ -169,14 +183,14 @@ class LocalStorage(BaseStorage):
                     if isinstance(val, bool):
                         val_str = "true" if val else "false"
                     elif isinstance(val, str):
-                        escaped = val.replace('"', '\\"')
+                        escaped = _toml_escape_string(val)
                         val_str = f'"{escaped}"'
                     elif isinstance(val, (int, float)):
                         val_str = str(val)
                     elif isinstance(val, (list, dict)):
                         val_str = json_dumps(val)
                     else:
-                        val_str = f'"{str(val)}"'
+                        val_str = f'"{_toml_escape_string(str(val))}"'
                     lines.append(f"{key} = {val_str}")
                 lines.append("")
             
