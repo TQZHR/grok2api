@@ -8,7 +8,7 @@ assets = { directory = "./app/static", binding = "ASSETS" }
 # Hard-pin execution closer to the US to make egress locality more stable.
 # Docs: https://developers.cloudflare.com/workers/platform/placement/
 [placement]
-region = "aws:us-east-1"
+region = "aws:us-east-2"
 
 [[d1_databases]]
 binding = "DB"
